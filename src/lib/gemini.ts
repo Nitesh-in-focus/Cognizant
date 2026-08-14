@@ -48,7 +48,7 @@ export async function generateGeminiContent(
       };
     }
 
-    const modelName = options.model || 'gemini-1.5-flash';
+    const modelName = options.model || 'gemini-flash-latest';
     const model = ai.getGenerativeModel({
       model: modelName,
       systemInstruction: options.systemInstruction,
