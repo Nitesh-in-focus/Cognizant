@@ -1,4 +1,5 @@
 import { logAiRecommendation } from './aiLogger';
+import { generateGeminiContent, isGeminiConfigured } from '../../lib/gemini';
 
 export interface SupplierCandidate {
   supplier_id: string;
@@ -38,8 +39,7 @@ export async function getAiSupplierRecommendation(
     throw new Error('No candidate suppliers available for evaluation');
   }
 
-  // Multi-criteria heuristic scoring:
-  // Quality (35%), Delivery (25%), Price Competitiveness (20%), Historical Reliability (20%)
+  // 1. Calculate baseline multi-criteria score
   const minPrice = Math.min(...candidates.map((c) => c.unit_price || 100));
   const scored = candidates.map((cand) => {
     const priceScore = Math.max(0, 100 - (((cand.unit_price - minPrice) / (minPrice || 1)) * 100));
@@ -54,16 +54,14 @@ export async function getAiSupplierRecommendation(
   }).sort((a, b) => b.totalScore - a.totalScore);
 
   const best = scored[0];
-  const confidence = Math.min(96, Math.max(78, Math.round(best.totalScore)));
-
-  const reasons: string[] = [
+  let confidence = Math.min(96, Math.max(78, Math.round(best.totalScore)));
+  let reasons: string[] = [
     `Strong Quality Rating: ${best.quality_score}% inspection pass rate.`,
     `On-Time Delivery Performance: ${best.delivery_score}% OTIF track record.`,
     `Capacity Readiness: Proven ability to fulfill ${requiredQuantity.toLocaleString()} units with ${best.lead_time_days}-day lead time.`,
     `Lowest Historical Exceptions: Only ${best.exception_count} recorded variances in previous orders.`,
   ];
-
-  const riskFactors: string[] = [];
+  let riskFactors: string[] = [];
   if (best.lead_time_days > 7) {
     riskFactors.push(`Lead time of ${best.lead_time_days} days requires advance dispatch scheduling.`);
   }
@@ -72,6 +70,44 @@ export async function getAiSupplierRecommendation(
   }
   if (riskFactors.length === 0) {
     riskFactors.push('Low overall operational risk profile across all evaluation vectors.');
+  }
+
+  // 2. If Gemini LLM is active, enhance recommendation with Deep Reasoning
+  if (isGeminiConfigured()) {
+    try {
+      const prompt = `Evaluate the following suppliers for a Purchase Requisition of ${requiredQuantity.toLocaleString()} units (Product ID: ${productId}).
+Candidates:
+${JSON.stringify(candidates, null, 2)}
+
+Respond with JSON format matching:
+{
+  "recommended_supplier_name": "${best.supplier_name}",
+  "confidence": 92,
+  "reasons": ["reason1", "reason2", "reason3"],
+  "risk_factors": ["risk1", "risk2"]
+}`;
+
+      const geminiRes = await generateGeminiContent(prompt, {
+        systemInstruction: 'You are an Enterprise Strategic Sourcing AI. Perform multi-criteria trade-off analysis between cost, quality, delivery, and capacity. Return strictly valid JSON.',
+        responseMimeType: 'application/json',
+        temperature: 0.2,
+      });
+
+      if (geminiRes.success && geminiRes.text) {
+        const parsed = JSON.parse(geminiRes.text);
+        if (parsed.reasons && Array.isArray(parsed.reasons) && parsed.reasons.length > 0) {
+          reasons = parsed.reasons;
+        }
+        if (parsed.risk_factors && Array.isArray(parsed.risk_factors) && parsed.risk_factors.length > 0) {
+          riskFactors = parsed.risk_factors;
+        }
+        if (parsed.confidence && typeof parsed.confidence === 'number') {
+          confidence = Math.min(99, Math.max(70, parsed.confidence));
+        }
+      }
+    } catch (llmErr) {
+      console.warn('Gemini Supplier reasoning fallback:', llmErr);
+    }
   }
 
   const alternative_suppliers = scored.slice(1, 3).map((alt) => ({

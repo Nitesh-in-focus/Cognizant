@@ -1,4 +1,5 @@
 import { logAiRecommendation } from './aiLogger';
+import { generateGeminiContent, isGeminiConfigured } from '../../lib/gemini';
 
 export interface QualityAnalysisInput {
   quality_check_id?: string;
@@ -50,11 +51,56 @@ export async function analyzeQualityInspection(
   const quantityScore = Math.round(Math.min(20, (input.received_quantity / Math.max(1, input.expected_quantity)) * 20));
   const docsScore = 9.5;
   const deliveryScore = 14.0;
-  const overallScore = Math.round((qualityScore + quantityScore + packagingScore + docsScore + deliveryScore) * 10) / 10;
+  let overallScore = Math.round((qualityScore + quantityScore + packagingScore + docsScore + deliveryScore) * 10) / 10;
 
-  const inspectionSummary = input.damaged_quantity > 0
+  let inspectionSummary = input.damaged_quantity > 0
     ? `AI Quality Inspection detected ${input.damaged_quantity} units with potential transit/seal wear. Recommended score: ${overallScore}/100. Action: ${action}.`
     : `AI Quality Inspection verified 100% compliant packaging and material integrity. Recommended score: ${overallScore}/100.`;
+
+  let confidence = 91;
+
+  // If Gemini LLM is active, execute deep defect classification
+  if (isGeminiConfigured()) {
+    try {
+      const prompt = `Analyze the following goods receipt intake inspection:
+- PO Number: ${input.po_number}
+- Supplier: ${input.supplier_name}
+- Product: ${input.product_name}
+- Expected Quantity: ${input.expected_quantity}
+- Received Quantity: ${input.received_quantity}
+- Damaged Quantity: ${input.damaged_quantity}
+- Physical Observations: "${input.observations}"
+
+Respond in JSON format matching:
+{
+  "defect_classification": "NONE" | "MINOR_PACKAGING" | "DIMENSIONAL_VARIANCE" | "TRANSIT_DAMAGE" | "CRITICAL_DEFECT",
+  "suggested_action": "ACCEPT_ALL" | "ACCEPT_WITH_DEBIT_NOTE" | "HOLD_FOR_REINSPECTION" | "REJECT_LOT",
+  "recommended_quality_score": 38,
+  "recommended_packaging_score": 14,
+  "inspection_summary": "Detailed QA summary string",
+  "confidence": 94
+}`;
+
+      const geminiRes = await generateGeminiContent(prompt, {
+        systemInstruction: 'You are an Industrial QA Quality Inspector AI. Evaluate cargo defects rigorously and output strictly valid JSON.',
+        responseMimeType: 'application/json',
+        temperature: 0.2,
+      });
+
+      if (geminiRes.success && geminiRes.text) {
+        const parsed = JSON.parse(geminiRes.text);
+        if (parsed.defect_classification) defectClass = parsed.defect_classification;
+        if (parsed.suggested_action) action = parsed.suggested_action;
+        if (parsed.recommended_quality_score) qualityScore = parsed.recommended_quality_score;
+        if (parsed.recommended_packaging_score) packagingScore = parsed.recommended_packaging_score;
+        if (parsed.inspection_summary) inspectionSummary = parsed.inspection_summary;
+        if (parsed.confidence) confidence = parsed.confidence;
+        overallScore = Math.round((qualityScore + quantityScore + packagingScore + docsScore + deliveryScore) * 10) / 10;
+      }
+    } catch (llmErr) {
+      console.warn('Gemini Quality Inspection fallback:', llmErr);
+    }
+  }
 
   const result: QualityAnalysisResult = {
     recommended_quality_score: qualityScore,
@@ -65,7 +111,7 @@ export async function analyzeQualityInspection(
     recommended_overall_score: overallScore,
     defect_classification: defectClass,
     inspection_summary: inspectionSummary,
-    confidence: 91,
+    confidence,
     suggested_action: action,
   };
 
@@ -74,7 +120,7 @@ export async function analyzeQualityInspection(
     'quality_checks',
     input.quality_check_id || input.po_number,
     result,
-    91,
+    confidence,
     inspectionSummary,
     input
   );
