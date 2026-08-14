@@ -266,3 +266,107 @@ export interface Payment {
   suppliers?: Supplier;
   invoices?: Invoice;
 }
+
+export interface QualityCheck {
+  quality_check_id: string;
+  supplier_id: string;
+  po_id: string;
+  shipment_id?: string;
+  grn_id?: string;
+  warehouse_id?: string;
+  product_id?: string;
+  inspector_id?: string;
+  inspection_date: string;
+  expected_quantity: number;
+  received_quantity: number;
+  accepted_quantity: number;
+  rejected_quantity: number;
+  damaged_quantity: number;
+  product_quality_score: number; // Max 40
+  quantity_accuracy_score: number; // Max 20
+  packaging_score: number; // Max 15
+  documentation_score: number; // Max 10
+  delivery_condition_score: number; // Max 15
+  overall_score: number; // 0-100
+  defect_rate?: number;
+  status: 'PENDING' | 'IN_PROGRESS' | 'PASSED' | 'PASSED_WITH_ISSUES' | 'FAILED' | 'FINALIZED';
+  remarks?: string;
+  evidence_path?: string;
+  created_at?: string;
+  finalized_at?: string;
+  suppliers?: Supplier;
+  purchase_orders?: PurchaseOrder;
+  products?: Product;
+  warehouses?: Warehouse;
+}
+
+export interface QualityCheckItem {
+  qc_item_id: string;
+  quality_check_id: string;
+  product_id: string;
+  inspected_quantity: number;
+  accepted_quantity: number;
+  rejected_quantity: number;
+  defect_category?: string;
+  notes?: string;
+  products?: Product;
+}
+
+export interface SupplierPerformance {
+  supplier_performance_id: string;
+  supplier_id: string;
+  quality_score: number; // 35%
+  delivery_score: number; // 25%
+  quantity_accuracy_score: number; // 15%
+  invoice_accuracy_score: number; // 10%
+  responsiveness_score: number; // 10%
+  reliability_score: number; // 5%
+  overall_score: number; // 100%
+  sample_size: number;
+  calculated_at: string;
+  suppliers?: Supplier;
+}
+
+export interface SupplierScoreHistory {
+  history_id: string;
+  supplier_id: string;
+  previous_score: number;
+  new_score: number;
+  change: number;
+  reason: string;
+  source_quality_check_id?: string;
+  calculated_at: string;
+  suppliers?: Supplier;
+}
+
+export interface AiRecommendation {
+  ai_recommendation_id: string;
+  recommendation_type: 'SUPPLIER_SELECTION' | 'ETA' | 'DOCK_ASSIGNMENT' | 'SHIPMENT_PRIORITY' | 'QUALITY_ANALYSIS';
+  entity_type: string;
+  entity_id: string;
+  model_name: string;
+  recommendation: any;
+  confidence: number;
+  reasoning_summary: string;
+  input_snapshot?: any;
+  human_decision?: 'ACCEPTED' | 'OVERRIDDEN' | 'REJECTED' | 'PENDING';
+  decided_by?: string;
+  decided_at?: string;
+  created_at?: string;
+}
+
+export interface AuditLog {
+  audit_id: string;
+  user_id?: string;
+  user_name?: string;
+  user_role: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  previous_state?: any;
+  new_state?: any;
+  reason?: string;
+  is_emergency_override?: boolean;
+  metadata?: any;
+  created_at?: string;
+}

@@ -43,122 +43,146 @@ export const AppSidebar: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, role, logout, unreadAlertsCount } = useApp();
 
-  const allNavGroups: NavGroup[] = [
-    {
-      label: 'Control Tower',
-      items: [
-        { title: 'Dashboard', path: '/', icon: LayoutDashboard },
+  const allNavGroups: NavGroup[] = role === 'SUPPLIER'
+    ? [
         {
-          title: 'Traceability Matrix',
-          path: '/traceability',
-          icon: GitFork,
-          badge: 'E2E',
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER', 'WAREHOUSE_MANAGER', 'FINANCE_MANAGER'],
+          label: 'Supplier Hub',
+          items: [
+            { title: 'Supplier Portal', path: '/supplier', icon: Building2, badge: 'PORTAL' },
+            {
+              title: 'Supplier Alerts',
+              path: '/alerts',
+              icon: Bell,
+              badge: unreadAlertsCount > 0 ? String(unreadAlertsCount) : undefined,
+              badgeColor: 'bg-rose-500 text-white',
+            },
+          ],
         },
-      ],
-    },
-    {
-      label: 'Procurement',
-      items: [
+      ]
+    : [
         {
-          title: 'Purchase Requisitions',
-          path: '/purchase-requisitions',
-          icon: FileText,
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER'],
-        },
-        {
-          title: 'Purchase Orders',
-          path: '/purchase-orders',
-          icon: ShoppingCart,
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER'],
-        },
-        {
-          title: 'Suppliers Directory',
-          path: '/suppliers',
-          icon: Building2,
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER'],
+          label: 'Control Tower',
+          items: [
+            { title: 'Dashboard', path: '/', icon: LayoutDashboard },
+            {
+              title: 'Traceability Matrix',
+              path: '/traceability',
+              icon: GitFork,
+              badge: 'E2E',
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER', 'LOGISTICS_MANAGER', 'WAREHOUSE_MANAGER', 'FINANCE_MANAGER'],
+            },
+          ],
         },
         {
-          title: 'Product SKU Catalog',
-          path: '/products',
-          icon: Package,
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER'],
-        },
-      ],
-    },
-    {
-      label: 'Logistics & Yard',
-      items: [
-        {
-          title: 'Live Shipments',
-          path: '/shipments',
-          icon: Truck,
-          live: true,
-          allowedRoles: ['ADMIN', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR'],
-        },
-        {
-          title: 'Fleet & Trucks',
-          path: '/trucks',
-          icon: Radio,
-          allowedRoles: ['ADMIN', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR'],
-        },
-        {
-          title: 'Yard & Dock Bays',
-          path: '/yard',
-          icon: Boxes,
-          allowedRoles: ['ADMIN', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR', 'RECEIVING_OPERATOR'],
-        },
-        {
-          title: 'Receiving & GRN',
-          path: '/grn',
-          icon: ClipboardCheck,
-          allowedRoles: ['ADMIN', 'WAREHOUSE_MANAGER', 'RECEIVING_OPERATOR'],
-        },
-      ],
-    },
-    {
-      label: 'Finance & 3-Way Match',
-      items: [
-        {
-          title: 'Invoices & AI OCR',
-          path: '/invoices',
-          icon: Receipt,
-          allowedRoles: ['ADMIN', 'FINANCE_MANAGER', 'PROCUREMENT_MANAGER'],
+          label: 'Procurement',
+          items: [
+            {
+              title: 'Purchase Requisitions',
+              path: '/purchase-requisitions',
+              icon: FileText,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER'],
+            },
+            {
+              title: 'Purchase Orders',
+              path: '/purchase-orders',
+              icon: ShoppingCart,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER', 'LOGISTICS_MANAGER'],
+            },
+            {
+              title: 'Suppliers Directory',
+              path: '/suppliers',
+              icon: Building2,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER'],
+            },
+            {
+              title: 'Product SKU Catalog',
+              path: '/products',
+              icon: Package,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER'],
+            },
+          ],
         },
         {
-          title: 'Exceptions Hub',
-          path: '/exceptions',
-          icon: AlertTriangle,
-          badgeColor: 'bg-rose-500 text-white',
-          allowedRoles: ['ADMIN', 'FINANCE_MANAGER', 'PROCUREMENT_MANAGER'],
+          label: 'Logistics & Receiving',
+          items: [
+            {
+              title: 'Live Shipments',
+              path: '/shipments',
+              icon: Truck,
+              live: true,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS_MANAGER', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR'],
+            },
+            {
+              title: 'Fleet & Telematics',
+              path: '/trucks',
+              icon: Radio,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS_MANAGER', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR'],
+            },
+            {
+              title: 'Yard & Dock Bays',
+              path: '/yard',
+              icon: Boxes,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'WAREHOUSE_MANAGER', 'GATE_OPERATOR', 'RECEIVING_QC_OPERATOR', 'RECEIVING_OPERATOR'],
+            },
+            {
+              title: 'Receiving & GRN',
+              path: '/grn',
+              icon: ClipboardCheck,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'WAREHOUSE_MANAGER', 'RECEIVING_QC_OPERATOR', 'RECEIVING_OPERATOR'],
+            },
+            {
+              title: 'Quality Check (QC)',
+              path: '/quality',
+              icon: Shield,
+              badge: 'NEW',
+              badgeColor: 'bg-indigo-500 text-white',
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'RECEIVING_QC_OPERATOR', 'RECEIVING_OPERATOR', 'PROCUREMENT_MANAGER', 'WAREHOUSE_MANAGER', 'FINANCE_MANAGER'],
+            },
+          ],
         },
         {
-          title: 'Payments Settlement',
-          path: '/payments',
-          icon: CreditCard,
-          allowedRoles: ['ADMIN', 'FINANCE_MANAGER'],
+          label: 'Finance & 3-Way Match',
+          items: [
+            {
+              title: 'Invoices & AI OCR',
+              path: '/invoices',
+              icon: Receipt,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'FINANCE_MANAGER', 'PROCUREMENT_MANAGER'],
+            },
+            {
+              title: 'Exceptions Hub',
+              path: '/exceptions',
+              icon: AlertTriangle,
+              badgeColor: 'bg-rose-500 text-white',
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'FINANCE_MANAGER', 'PROCUREMENT_MANAGER'],
+            },
+            {
+              title: 'Payments Settlement',
+              path: '/payments',
+              icon: CreditCard,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'FINANCE_MANAGER'],
+            },
+          ],
         },
-      ],
-    },
-    {
-      label: 'Intelligence & System',
-      items: [
         {
-          title: 'Analytics & Power BI',
-          path: '/analytics',
-          icon: BarChart3,
-          allowedRoles: ['ADMIN', 'PROCUREMENT_MANAGER', 'WAREHOUSE_MANAGER', 'FINANCE_MANAGER'],
+          label: 'Intelligence & System',
+          items: [
+            {
+              title: 'Analytics & Power BI',
+              path: '/analytics',
+              icon: BarChart3,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_MANAGER', 'LOGISTICS_MANAGER', 'WAREHOUSE_MANAGER', 'FINANCE_MANAGER'],
+            },
+            {
+              title: 'System Alerts',
+              path: '/alerts',
+              icon: Bell,
+              badge: unreadAlertsCount > 0 ? String(unreadAlertsCount) : undefined,
+              badgeColor: 'bg-rose-500 text-white',
+            },
+          ],
         },
-        {
-          title: 'System Alerts',
-          path: '/alerts',
-          icon: Bell,
-          badge: unreadAlertsCount > 0 ? String(unreadAlertsCount) : undefined,
-          badgeColor: 'bg-rose-500 text-white',
-        },
-      ],
-    },
-  ];
+      ];
 
   // Filter items based on active user role
   const filteredNavGroups = allNavGroups

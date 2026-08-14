@@ -25,31 +25,46 @@ interface CommandSearchProps {
 
 // Define which tables/results each role is allowed to search
 const ROLE_SEARCH_SCOPES: Record<UserRole, string[]> = {
-  ADMIN: ['purchase_orders', 'purchase_requisitions', 'shipments', 'trucks', 'invoices', 'suppliers', 'exceptions'],
-  PROCUREMENT_MANAGER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions'],
-  WAREHOUSE_MANAGER: ['shipments', 'trucks', 'purchase_orders'],
+  SYSTEM_ADMIN: ['purchase_orders', 'purchase_requisitions', 'shipments', 'trucks', 'invoices', 'suppliers', 'exceptions', 'quality_checks', 'audit_logs'],
+  ADMIN: ['purchase_orders', 'purchase_requisitions', 'shipments', 'trucks', 'invoices', 'suppliers', 'exceptions', 'quality_checks', 'audit_logs'],
+  PROCUREMENT_MANAGER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions', 'quality_checks'],
+  LOGISTICS_MANAGER: ['shipments', 'trucks', 'purchase_orders'],
+  WAREHOUSE_MANAGER: ['shipments', 'trucks', 'purchase_orders', 'quality_checks'],
   GATE_OPERATOR: ['shipments', 'trucks'],
-  RECEIVING_OPERATOR: ['shipments', 'purchase_orders'],
+  RECEIVING_QC_OPERATOR: ['shipments', 'purchase_orders', 'quality_checks'],
+  RECEIVING_OPERATOR: ['shipments', 'purchase_orders', 'quality_checks'],
   FINANCE_MANAGER: ['invoices', 'exceptions', 'purchase_orders'],
+  SUPPLIER: ['purchase_orders', 'shipments', 'invoices', 'quality_checks'],
 };
 
 const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: string }[]> = {
+  SYSTEM_ADMIN: [
+    { label: 'Traceability Matrix', path: '/traceability', color: 'text-blue-600' },
+    { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Quality Control (QC)', path: '/quality', color: 'text-indigo-600' },
+    { label: 'Exceptions Hub', path: '/exceptions', color: 'text-rose-600' },
+  ],
   ADMIN: [
     { label: 'Traceability Matrix', path: '/traceability', color: 'text-blue-600' },
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Quality Control (QC)', path: '/quality', color: 'text-indigo-600' },
     { label: 'Exceptions Hub', path: '/exceptions', color: 'text-rose-600' },
-    { label: 'Analytics', path: '/analytics', color: 'text-purple-600' },
   ],
   PROCUREMENT_MANAGER: [
     { label: 'Purchase Requisitions', path: '/purchase-requisitions', color: 'text-amber-600' },
     { label: 'Purchase Orders', path: '/purchase-orders', color: 'text-blue-600' },
     { label: 'Suppliers Directory', path: '/suppliers', color: 'text-emerald-600' },
-    { label: 'Price Exceptions', path: '/exceptions', color: 'text-rose-600' },
+    { label: 'Supplier Quality', path: '/quality', color: 'text-indigo-600' },
+  ],
+  LOGISTICS_MANAGER: [
+    { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Fleet & Telematics', path: '/trucks', color: 'text-indigo-600' },
+    { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
   ],
   WAREHOUSE_MANAGER: [
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
     { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
-    { label: 'Fleet Trucks', path: '/trucks', color: 'text-indigo-600' },
+    { label: 'Quality Inspection', path: '/quality', color: 'text-indigo-600' },
     { label: 'Goods Receipts', path: '/grn', color: 'text-purple-600' },
   ],
   GATE_OPERATOR: [
@@ -57,8 +72,13 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
     { label: 'Yard & Gate Queue', path: '/yard', color: 'text-emerald-600' },
     { label: 'Fleet Trucks', path: '/trucks', color: 'text-indigo-600' },
   ],
+  RECEIVING_QC_OPERATOR: [
+    { label: 'Quality Check (QC)', path: '/quality', color: 'text-indigo-600' },
+    { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
+    { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
+  ],
   RECEIVING_OPERATOR: [
-    { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Quality Check (QC)', path: '/quality', color: 'text-indigo-600' },
     { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
     { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
   ],
@@ -67,6 +87,10 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
     { label: 'Exceptions Hub', path: '/exceptions', color: 'text-rose-600' },
     { label: 'Payments Queue', path: '/payments', color: 'text-emerald-600' },
     { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
+  ],
+  SUPPLIER: [
+    { label: 'Supplier Portal', path: '/supplier', color: 'text-indigo-600' },
+    { label: 'Supplier Alerts', path: '/alerts', color: 'text-rose-600' },
   ],
 };
 

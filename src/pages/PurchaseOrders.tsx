@@ -15,9 +15,10 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { OcrScanPanel } from '../components/common/OcrScanPanel';
 import { OcrInvoiceResult } from '../lib/ocr';
+import { getAiSupplierRecommendation, SupplierAiRecommendation } from '../services/ai/supplierRecommendationService';
 
 export const PurchaseOrders: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApprovePO, logAuditAction } = useApp();
 
   const [pos, setPos] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -29,6 +30,8 @@ export const PurchaseOrders: React.FC = () => {
   // Create PO Modal state
   const [openCreate, setOpenCreate] = useState(false);
   const [poInputMode, setPoInputMode] = useState<'manual' | 'ocr'>('manual');
+  const [aiRec, setAiRec] = useState<SupplierAiRecommendation | null>(null);
+  const [runningAiRec, setRunningAiRec] = useState(false);
   const [newPo, setNewPo] = useState({
     supplier_id: '',
     warehouse_id: '',
@@ -95,7 +98,45 @@ export const PurchaseOrders: React.FC = () => {
     }
   };
 
+  const handleRunAiSupplierSelect = async () => {
+    try {
+      setRunningAiRec(true);
+      const candidates = suppliers.slice(0, 5).map((s, idx) => ({
+        supplier_id: s.supplier_id,
+        supplier_name: s.supplier_name,
+        city: s.city,
+        quality_score: 90 + idx,
+        delivery_score: 88 + idx * 2,
+        overall_score: 91 + idx,
+        unit_price: (newPo.unit_price || 50) + (idx === 0 ? 0 : idx * 2),
+        lead_time_days: 2 + idx,
+        exception_count: idx,
+        capacity_units: 5000,
+      }));
+
+      const res = await getAiSupplierRecommendation(
+        'PR-DEMO',
+        newPo.product_id || 'PROD',
+        newPo.quantity,
+        candidates
+      );
+
+      setAiRec(res);
+      setNewPo((prev) => ({ ...prev, supplier_id: res.recommended_supplier_id }));
+      showSnackbar(`AI recommended: ${res.recommended_supplier_name} (${res.confidence}% confidence)`, 'success');
+    } catch (err: any) {
+      showSnackbar('AI Supplier Recommendation failed: ' + err.message, 'error');
+    } finally {
+      setRunningAiRec(false);
+    }
+  };
+
   const handleCreatePo = async () => {
+    if (!canApprovePO()) {
+      showSnackbar('Permission Denied: Only Procurement Managers can issue/approve Purchase Orders.', 'error');
+      return;
+    }
+
     try {
       if (!newPo.supplier_id || !newPo.warehouse_id || !newPo.product_id) {
         showSnackbar('Please complete all PO fields', 'error');
@@ -138,6 +179,11 @@ export const PurchaseOrders: React.FC = () => {
           line_total: totalAmount,
         },
       ]);
+
+      await logAuditAction('PO_ISSUED', 'purchase_orders', po.po_id, {
+        po_number: poNumber,
+        total_amount: totalAmount,
+      });
 
       showSnackbar(`Purchase Order #${poNumber} issued for ₹${totalAmount.toLocaleString()}!`, 'success');
       setOpenCreate(false);
@@ -488,10 +534,18 @@ export const PurchaseOrders: React.FC = () => {
             </div>
 
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Vendor / Supplier</span>
-                {newPo.supplier_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Auto</span>}
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-semibold text-slate-700">Vendor / Supplier</label>
+                <button
+                  type="button"
+                  onClick={handleRunAiSupplierSelect}
+                  disabled={runningAiRec}
+                  className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded font-bold border border-indigo-200 flex items-center gap-1"
+                >
+                  <Sparkles className="w-3 h-3 text-indigo-600" />
+                  <span>{runningAiRec ? 'Evaluating...' : 'AI Best Supplier'}</span>
+                </button>
+              </div>
               <select
                 value={newPo.supplier_id}
                 onChange={(e) => setNewPo({ ...newPo, supplier_id: e.target.value })}

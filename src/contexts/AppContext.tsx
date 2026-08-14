@@ -2,12 +2,16 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { supabase } from '../lib/supabase';
 
 export type UserRole = 
-  | 'ADMIN' 
+  | 'SYSTEM_ADMIN' 
   | 'PROCUREMENT_MANAGER' 
+  | 'LOGISTICS_MANAGER' 
   | 'WAREHOUSE_MANAGER' 
   | 'GATE_OPERATOR' 
-  | 'RECEIVING_OPERATOR' 
-  | 'FINANCE_MANAGER';
+  | 'RECEIVING_QC_OPERATOR' 
+  | 'FINANCE_MANAGER'
+  | 'SUPPLIER'
+  | 'ADMIN' // alias for SYSTEM_ADMIN
+  | 'RECEIVING_OPERATOR'; // alias for RECEIVING_QC_OPERATOR
 
 export interface AppUser {
   user_id: string;
@@ -18,6 +22,7 @@ export interface AppUser {
   phone?: string;
   avatar_url?: string;
   last_login?: string;
+  supplier_id?: string; // For SUPPLIER role data isolation
 }
 
 export type ToastSeverity = 'error' | 'warning' | 'info' | 'success';
@@ -30,6 +35,8 @@ export interface AlertNotification {
   timestamp: string;
   read: boolean;
   link?: string;
+  recipient_role?: UserRole;
+  supplier_id?: string;
 }
 
 export interface ToastMessage {
@@ -38,7 +45,7 @@ export interface ToastMessage {
   severity: ToastSeverity;
 }
 
-interface AppContextType {
+export interface AppContextType {
   currentUser: AppUser | null;
   role: UserRole;
   setRole: (role: UserRole) => void;
@@ -51,6 +58,7 @@ interface AppContextType {
     role: UserRole;
     department: string;
     phone?: string;
+    supplier_id?: string;
   }) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   demoMode: boolean;
@@ -65,16 +73,37 @@ interface AppContextType {
   toasts: ToastMessage[];
   showToast: (message: string, severity?: ToastSeverity) => void;
   removeToast: (id: string) => void;
-  showSnackbar: (message: string, severity?: ToastSeverity) => void; // alias for compatibility
+  showSnackbar: (message: string, severity?: ToastSeverity) => void;
+  // RBAC Permission Helpers
+  canApprovePR: () => boolean;
+  canApprovePO: () => boolean;
+  canAcceptPO: (poSupplierId?: string) => boolean;
+  canCreateShipment: (poSupplierId?: string) => boolean;
+  canAssignDock: () => boolean;
+  canFinalizeQC: () => boolean;
+  canApproveInvoice: () => boolean;
+  canReleasePayment: () => boolean;
+  isSupplier: boolean;
+  effectiveSupplierId?: string;
+  logAuditAction: (action: string, entityType: string, entityId: string, details?: any) => Promise<void>;
 }
 
-export const defaultPersonaUsers: Record<UserRole, AppUser> = {
+export const defaultPersonaUsers: Record<string, AppUser> = {
+  SYSTEM_ADMIN: {
+    user_id: 'a0000000-0000-4000-8000-000000000001',
+    email: 'admin@c2tower.com',
+    full_name: 'Vikramaditya Rao',
+    role: 'SYSTEM_ADMIN',
+    department: 'System Architecture & Security Administration',
+    phone: '+91 98200 11001',
+    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+  },
   ADMIN: {
     user_id: 'a0000000-0000-4000-8000-000000000001',
     email: 'admin@c2tower.com',
     full_name: 'Vikramaditya Rao',
-    role: 'ADMIN',
-    department: 'Executive Operations',
+    role: 'SYSTEM_ADMIN',
+    department: 'System Architecture & Security Administration',
     phone: '+91 98200 11001',
     avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
   },
@@ -86,6 +115,15 @@ export const defaultPersonaUsers: Record<UserRole, AppUser> = {
     department: 'Strategic Sourcing & Vendor Procurement',
     phone: '+91 98200 11002',
     avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+  },
+  LOGISTICS_MANAGER: {
+    user_id: 'a0000000-0000-4000-8000-000000000007',
+    email: 'logistics@c2tower.com',
+    full_name: 'Vikram Rathore',
+    role: 'LOGISTICS_MANAGER',
+    department: 'Inbound Logistics & Corridor Fleet Tracking',
+    phone: '+91 98200 11007',
+    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150',
   },
   WAREHOUSE_MANAGER: {
     user_id: 'a0000000-0000-4000-8000-000000000003',
@@ -105,12 +143,21 @@ export const defaultPersonaUsers: Record<UserRole, AppUser> = {
     phone: '+91 98200 11004',
     avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
   },
+  RECEIVING_QC_OPERATOR: {
+    user_id: 'a0000000-0000-4000-8000-000000000005',
+    email: 'receiving@c2tower.com',
+    full_name: 'Amit Kulkarni',
+    role: 'RECEIVING_QC_OPERATOR',
+    department: 'Dock Intake & Quality Assurance (QC)',
+    phone: '+91 98200 11005',
+    avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
+  },
   RECEIVING_OPERATOR: {
     user_id: 'a0000000-0000-4000-8000-000000000005',
     email: 'receiving@c2tower.com',
     full_name: 'Amit Kulkarni',
-    role: 'RECEIVING_OPERATOR',
-    department: 'Dock Intake & Quality Assurance',
+    role: 'RECEIVING_QC_OPERATOR',
+    department: 'Dock Intake & Quality Assurance (QC)',
     phone: '+91 98200 11005',
     avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
   },
@@ -122,6 +169,16 @@ export const defaultPersonaUsers: Record<UserRole, AppUser> = {
     department: 'Financial Controller & Accounts Payable',
     phone: '+91 98200 11006',
     avatar_url: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150',
+  },
+  SUPPLIER: {
+    user_id: 'a0000000-0000-4000-8000-000000000008',
+    email: 'rahul.mehta@tataindustrial.com',
+    full_name: 'Rahul Mehta',
+    role: 'SUPPLIER',
+    department: 'Tata Industrial Solutions (Supplier Portal)',
+    phone: '+91 98200 11008',
+    supplier_id: '00000000-0000-4000-8000-000000000003',
+    avatar_url: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150',
   },
 };
 
@@ -339,6 +396,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     showToast(`${alert.title}: ${alert.message}`, alert.severity);
   };
 
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
   const showToast = (message: string, severity: ToastSeverity = 'info') => {
     const id = `toast-${Date.now()}-${Math.random()}`;
     setToasts((prev) => [...prev, { id, message, severity }]);
@@ -347,15 +408,75 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }, 4000);
   };
 
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+  // RBAC Permission Helpers
+  const normalizedRole = role === 'ADMIN' ? 'SYSTEM_ADMIN' : role === 'RECEIVING_OPERATOR' ? 'RECEIVING_QC_OPERATOR' : role;
+  const isSupplier = normalizedRole === 'SUPPLIER';
+  const effectiveSupplierId = currentUser?.supplier_id;
+
+  const canApprovePR = () => {
+    return normalizedRole === 'PROCUREMENT_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+  };
+
+  const canApprovePO = () => {
+    return normalizedRole === 'PROCUREMENT_MANAGER';
+  };
+
+  const canAcceptPO = (poSupplierId?: string) => {
+    if (normalizedRole !== 'SUPPLIER') return false;
+    if (!effectiveSupplierId) return true;
+    return !poSupplierId || poSupplierId === effectiveSupplierId;
+  };
+
+  const canCreateShipment = (poSupplierId?: string) => {
+    if (normalizedRole === 'LOGISTICS_MANAGER' || normalizedRole === 'SYSTEM_ADMIN') return true;
+    if (normalizedRole === 'SUPPLIER') {
+      return !poSupplierId || !effectiveSupplierId || poSupplierId === effectiveSupplierId;
+    }
+    return false;
+  };
+
+  const canAssignDock = () => {
+    return normalizedRole === 'WAREHOUSE_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+  };
+
+  const canFinalizeQC = () => {
+    return normalizedRole === 'RECEIVING_QC_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+  };
+
+  const canApproveInvoice = () => {
+    return normalizedRole === 'FINANCE_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+  };
+
+  const canReleasePayment = () => {
+    return normalizedRole === 'FINANCE_MANAGER';
+  };
+
+  const logAuditAction = async (action: string, entityType: string, entityId: string, details?: any) => {
+    try {
+      await supabase.from('audit_logs').insert([
+        {
+          user_id: currentUser?.user_id || null,
+          user_name: currentUser?.full_name || 'System User',
+          user_role: normalizedRole,
+          action,
+          entity_type: entityType,
+          entity_id: entityId,
+          metadata: details || null,
+          is_emergency_override: details?.is_emergency_override || false,
+          reason: details?.reason || null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } catch (e) {
+      console.warn('Audit log write error:', e);
+    }
   };
 
   return (
     <AppContext.Provider
       value={{
         currentUser,
-        role,
+        role: normalizedRole,
         setRole,
         login,
         loginAsPersona,
@@ -374,6 +495,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         showToast,
         removeToast,
         showSnackbar: showToast,
+        canApprovePR,
+        canApprovePO,
+        canAcceptPO,
+        canCreateShipment,
+        canAssignDock,
+        canFinalizeQC,
+        canApproveInvoice,
+        canReleasePayment,
+        isSupplier,
+        effectiveSupplierId,
+        logAuditAction,
       }}
     >
       {children}

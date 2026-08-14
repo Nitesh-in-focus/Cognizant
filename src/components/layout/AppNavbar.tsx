@@ -60,12 +60,16 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
           .join(' ');
 
   const roleLabels: Record<UserRole, { label: string; badge: string }> = {
+    SYSTEM_ADMIN: { label: 'System Administration', badge: 'Sys Admin' },
     ADMIN: { label: 'Executive Operations', badge: 'Admin' },
     PROCUREMENT_MANAGER: { label: 'Strategic Sourcing', badge: 'Procurement' },
+    LOGISTICS_MANAGER: { label: 'Inbound Logistics', badge: 'Logistics' },
     WAREHOUSE_MANAGER: { label: 'Distribution Hub', badge: 'Warehouse' },
     GATE_OPERATOR: { label: 'Gate Security', badge: 'Gate Post' },
+    RECEIVING_QC_OPERATOR: { label: 'Receiving & QC Lead', badge: 'QC Lead' },
     RECEIVING_OPERATOR: { label: 'Dock QA Inspector', badge: 'Receiving' },
     FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
+    SUPPLIER: { label: 'Tata Industrial Solutions', badge: 'Supplier' },
   };
 
   const handleLogout = () => {

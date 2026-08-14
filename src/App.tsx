@@ -25,10 +25,12 @@ import Exceptions from './pages/Exceptions';
 import Payments from './pages/Payments';
 import Analytics from './pages/Analytics';
 import Alerts from './pages/Alerts';
+import { QualityCheckPage } from './pages/QualityCheck';
+import { SupplierPortal } from './pages/supplier/SupplierPortal';
 
 export const App: React.FC = () => {
   const location = useLocation();
-  const { currentUser } = useApp();
+  const { currentUser, role } = useApp();
   const [openScenarioRunner, setOpenScenarioRunner] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
   const [openGuide, setOpenGuide] = useState(() => {
@@ -77,6 +79,9 @@ export const App: React.FC = () => {
           <Routes>
             <Route path="/" element={<Dashboard onOpenGuide={() => setOpenGuide(true)} />} />
             <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="/supplier" element={<SupplierPortal />} />
+            <Route path="/supplier/*" element={<SupplierPortal />} />
+            <Route path="/quality" element={<QualityCheckPage />} />
             <Route path="/traceability" element={<Traceability />} />
             <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
             <Route path="/purchase-orders" element={<PurchaseOrders />} />

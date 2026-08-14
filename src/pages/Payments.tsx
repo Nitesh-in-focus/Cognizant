@@ -16,7 +16,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 
 export const Payments: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canReleasePayment, logAuditAction } = useApp();
 
   const [payments, setPayments] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -66,6 +66,11 @@ export const Payments: React.FC = () => {
   };
 
   const handleExecutePayment = async () => {
+    if (!canReleasePayment()) {
+      showSnackbar('Permission Denied: Only Financial Controllers can disburse payments.', 'error');
+      return;
+    }
+
     try {
       const inv = invoices.find((i) => i.invoice_id === selectedInvoiceId);
       if (!inv) return;
@@ -90,6 +95,12 @@ export const Payments: React.FC = () => {
         .from('invoices')
         .update({ payment_status: 'PAID' })
         .eq('invoice_id', inv.invoice_id);
+
+      await logAuditAction('PAYMENT_DISBURSED', 'payments', inv.invoice_id, {
+        transaction_reference: txRef,
+        amount: inv.total_amount,
+        payment_method: paymentMethod,
+      });
 
       addAlert({
         title: `Payment Disbursed: ${txRef}`,

@@ -42,15 +42,15 @@ export const Auth: React.FC = () => {
 
   const personas = [
     {
-      role: 'ADMIN' as UserRole,
-      title: 'Executive Operations Lead',
-      name: defaultPersonaUsers.ADMIN.full_name,
-      email: defaultPersonaUsers.ADMIN.email,
-      dept: 'Executive Operations',
+      role: 'SYSTEM_ADMIN' as UserRole,
+      title: 'System Administrator',
+      name: defaultPersonaUsers.SYSTEM_ADMIN.full_name,
+      email: defaultPersonaUsers.SYSTEM_ADMIN.email,
+      dept: 'System Security & Administration',
       icon: Layers,
       color: 'bg-blue-600',
-      badge: 'Full Access',
-      desc: 'Complete Control Tower, analytics, and operational configuration.',
+      badge: 'Admin Only',
+      desc: 'System health, audit logs, and emergency administrative configuration.',
     },
     {
       role: 'PROCUREMENT_MANAGER' as UserRole,
@@ -61,18 +61,29 @@ export const Auth: React.FC = () => {
       icon: FileText,
       color: 'bg-amber-600',
       badge: 'PR & POs',
-      desc: 'Purchase Requisitions, Purchase Orders, Vendor SLA catalogs.',
+      desc: 'Requisition approvals, PO issuance, and AI supplier selection.',
+    },
+    {
+      role: 'LOGISTICS_MANAGER' as UserRole,
+      title: 'Logistics Manager',
+      name: defaultPersonaUsers.LOGISTICS_MANAGER.full_name,
+      email: defaultPersonaUsers.LOGISTICS_MANAGER.email,
+      dept: 'Inbound Logistics & Telematics',
+      icon: Truck,
+      color: 'bg-sky-600',
+      badge: 'Corridor & Fleet',
+      desc: 'Fleet telemetry, GPS tracking corridors, AI ETA, and delay resolution.',
     },
     {
       role: 'WAREHOUSE_MANAGER' as UserRole,
-      title: 'Warehouse & Facility Lead',
+      title: 'Warehouse & Yard Lead',
       name: defaultPersonaUsers.WAREHOUSE_MANAGER.full_name,
       email: defaultPersonaUsers.WAREHOUSE_MANAGER.email,
       dept: 'Pune Central DC Hub',
       icon: Boxes,
       color: 'bg-indigo-600',
-      badge: 'Yard & DC',
-      desc: 'Fleet telemetry, warehouse dock scheduling, and yard queues.',
+      badge: 'Yard & Docks',
+      desc: 'Facility staging yard, dock door turnaround, and waiting queue.',
     },
     {
       role: 'GATE_OPERATOR' as UserRole,
@@ -83,18 +94,18 @@ export const Auth: React.FC = () => {
       icon: Radio,
       color: 'bg-teal-600',
       badge: 'Gate In/Out',
-      desc: 'Vehicle license verification, gate check-in, and dwell tracking.',
+      desc: 'Vehicle license verification, gate check-in, and driver verification.',
     },
     {
-      role: 'RECEIVING_OPERATOR' as UserRole,
-      title: 'Dock QA & Receiving Inspector',
-      name: defaultPersonaUsers.RECEIVING_OPERATOR.full_name,
-      email: defaultPersonaUsers.RECEIVING_OPERATOR.email,
-      dept: 'Quality Assurance',
-      icon: Truck,
+      role: 'RECEIVING_QC_OPERATOR' as UserRole,
+      title: 'Receiving & QC Inspector',
+      name: defaultPersonaUsers.RECEIVING_QC_OPERATOR.full_name,
+      email: defaultPersonaUsers.RECEIVING_QC_OPERATOR.email,
+      dept: 'Quality Assurance & Intake',
+      icon: ShieldCheck,
       color: 'bg-purple-600',
-      badge: 'GRN Intake',
-      desc: 'Unloading verification, Goods Receipt Notes, damage counters.',
+      badge: 'GRN & QC',
+      desc: 'Dockside unloading, GRN creation, and 5-pillar Quality Checks.',
     },
     {
       role: 'FINANCE_MANAGER' as UserRole,
@@ -105,7 +116,18 @@ export const Auth: React.FC = () => {
       icon: CreditCard,
       color: 'bg-emerald-600',
       badge: '3-Way Match',
-      desc: 'Invoice AI OCR, variance investigation, and NEFT payments.',
+      desc: 'Invoice AI OCR, variance triage, and NEFT payment releases.',
+    },
+    {
+      role: 'SUPPLIER' as UserRole,
+      title: 'Supplier Portal (External)',
+      name: defaultPersonaUsers.SUPPLIER.full_name,
+      email: defaultPersonaUsers.SUPPLIER.email,
+      dept: 'Tata Industrial Solutions Ltd',
+      icon: Building,
+      color: 'bg-orange-600',
+      badge: 'Isolated',
+      desc: 'PO acceptance, shipment dispatch, invoice submission, and QC ratings.',
     },
   ];
 
@@ -399,12 +421,14 @@ export const Auth: React.FC = () => {
                       onChange={(e) => setRole(e.target.value as UserRole)}
                       className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
                     >
-                      <option value="ADMIN">System Administrator (Full Access)</option>
+                      <option value="SYSTEM_ADMIN">System Administrator (Admin Only)</option>
                       <option value="PROCUREMENT_MANAGER">Procurement Manager (PR & POs)</option>
-                      <option value="WAREHOUSE_MANAGER">Warehouse Lead (Dock & Yard)</option>
-                      <option value="GATE_OPERATOR">Gate Operator (Check-In & Security)</option>
-                      <option value="RECEIVING_OPERATOR">Receiving Operator (GRN & QA)</option>
-                      <option value="FINANCE_MANAGER">Finance Controller (3-Way Match & Pay)</option>
+                      <option value="LOGISTICS_MANAGER">Logistics Manager (Shipments & Fleet Telematics)</option>
+                      <option value="WAREHOUSE_MANAGER">Warehouse Manager (Dock & Yard Scheduling)</option>
+                      <option value="GATE_OPERATOR">Gate Operator (Check-In & Truck Verification)</option>
+                      <option value="RECEIVING_QC_OPERATOR">Receiving & QC Inspector (GRN & Quality Check)</option>
+                      <option value="FINANCE_MANAGER">Finance Controller (3-Way Match & Payments)</option>
+                      <option value="SUPPLIER">Supplier Portal (External Partner)</option>
                     </select>
                   </div>
 

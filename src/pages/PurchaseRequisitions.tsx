@@ -17,7 +17,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 
 export const PurchaseRequisitions: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, canApprovePR, logAuditAction } = useApp();
 
   const [prs, setPrs] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -126,6 +126,11 @@ export const PurchaseRequisitions: React.FC = () => {
   };
 
   const handleUpdateStatus = async (prId: string, status: 'APPROVED' | 'REJECTED') => {
+    if (!canApprovePR()) {
+      showSnackbar('Permission Denied: Only Procurement Managers can approve or reject Purchase Requisitions.', 'error');
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('purchase_requisitions')
@@ -136,6 +141,13 @@ export const PurchaseRequisitions: React.FC = () => {
         .eq('pr_id', prId);
 
       if (error) throw error;
+
+      await logAuditAction(
+        status === 'APPROVED' ? 'PR_APPROVED' : 'PR_REJECTED',
+        'purchase_requisitions',
+        prId,
+        { status }
+      );
 
       showSnackbar(`PR marked as ${status}`, 'info');
       triggerRefresh();

@@ -24,6 +24,7 @@ import {
   Compass,
   AlertTriangle,
   PlayCircle,
+  Building2,
 } from 'lucide-react';
 import { useApp, UserRole } from '../../contexts/AppContext';
 
@@ -56,6 +57,40 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
       proTips: string[];
     }
   > = {
+    SYSTEM_ADMIN: {
+      roleTitle: 'System Security & Administration Lead',
+      roleBadge: 'System Admin',
+      department: 'System Architecture & Security',
+      icon: Layers,
+      headerColor: 'from-blue-950 via-slate-900 to-blue-950',
+      accentColor: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+      tagline: 'Oversee system security, role permissions, audit trails, and infrastructure telemetry.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Review Global Control Tower Telemetry',
+          desc: 'Monitor live transit shipments, dock bay occupancy, open exceptions, and cashflow on hold.',
+          actionText: 'Open Control Tower',
+          actionPath: '/',
+        },
+        {
+          step: 2,
+          title: 'Audit System Operations & Security',
+          desc: 'Verify continuous relational integrity across all database tables and track user audit logs.',
+          actionText: 'Open Traceability Matrix',
+          actionPath: '/traceability',
+        },
+      ],
+      authorizedData: [
+        { title: 'Global Database Tables', desc: 'Full Read & Write access across all Supabase operational tables.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Audit Trail Logs', desc: 'Inspect security audit logs, persona actions, and system health.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 0,
+      pipelineNotes: 'Full system administration authority and global operational oversight.',
+      proTips: [
+        'Use the persona switcher to test workflows as any of the 8 business roles.',
+      ],
+    },
     ADMIN: {
       roleTitle: 'Executive Operations Director',
       roleBadge: 'Executive Director',
@@ -354,7 +389,108 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
       pipelineNotes: 'Your role governs Stage 6 (Invoice & 3-Way Match) and Stage 7 (Final Payment Settlement).',
       proTips: [
         'In the Exceptions Hub (/exceptions), click "1-Click Resolve" on any price variance to auto-adjust rates and lift payment holds.',
-        'Invoices that pass 3-way matching are immediately queued for 1-click NEFT bank settlement.',
+      ],
+    },
+    LOGISTICS_MANAGER: {
+      roleTitle: 'Inbound Logistics & Telematics Lead',
+      roleBadge: 'Logistics Lead',
+      department: 'Inbound Logistics',
+      icon: Truck,
+      headerColor: 'from-sky-950 via-slate-900 to-sky-950',
+      accentColor: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
+      tagline: 'Track fleet telemetry, manage GPS corridors, and leverage AI ETA predictions to prevent supply bottlenecks.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Monitor Live Inbound Shipments',
+          desc: 'Inspect real-time GPS locations and transit speeds on arterial highway corridors.',
+          actionText: 'Live GPS Map',
+          actionPath: '/shipments',
+        },
+        {
+          step: 2,
+          title: 'Analyze AI ETA & Delay Risk',
+          desc: 'Evaluate congestion bottlenecks and update expected delivery timestamps dynamically.',
+          actionText: 'Fleet Telematics',
+          actionPath: '/trucks',
+        },
+      ],
+      authorizedData: [
+        { title: 'Inbound Shipments', desc: 'Track carrier dispatches, manifest details, and corridor progression.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Fleet & Trucks Telemetry', desc: 'Monitor vehicle sensors, driver information, and speed metrics.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 2,
+      pipelineNotes: 'Your role governs Stage 3 (Highway Transit GPS) ensuring on-time delivery.',
+      proTips: [
+        'Use AI ETA prediction to detect potential delay risks early and coordinate with warehouse bays.',
+      ],
+    },
+    RECEIVING_QC_OPERATOR: {
+      roleTitle: 'Receiving & Quality Control Lead',
+      roleBadge: 'Receiving & QC',
+      department: 'Quality Assurance & Receiving',
+      icon: ClipboardCheck,
+      headerColor: 'from-purple-950 via-slate-900 to-purple-950',
+      accentColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
+      tagline: 'Inspect container unloads, sign off Goods Receipt Notes, and execute 5-pillar Quality Checks.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Inspect Inbound Container Unloading',
+          desc: 'Verify pallet manifests and verify product condition directly at the dock door.',
+          actionText: 'Inspect Cargo',
+          actionPath: '/grn',
+        },
+        {
+          step: 2,
+          title: 'Execute 5-Pillar Quality Inspection',
+          desc: 'Score product, quantity, packaging, documentation, and delivery pillars to update supplier ratings.',
+          actionText: 'Quality Checks',
+          actionPath: '/quality',
+        },
+      ],
+      authorizedData: [
+        { title: 'Goods Receipt Notes (GRN)', desc: 'Create, inspect, sign-off, and manage goods receipt records.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Quality Checks (QC)', desc: 'Conduct 5-pillar inspections, classify defect severity, and update vendor performance.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 4,
+      pipelineNotes: 'Your role governs Stage 5 (QA Intake & GRN) and Quality Verification.',
+      proTips: [
+        'Use AI QC Damage Analysis to auto-classify defects and determine appropriate severity ratings.',
+      ],
+    },
+    SUPPLIER: {
+      roleTitle: 'Verified External Supplier Partner',
+      roleBadge: 'Supplier Portal',
+      department: 'Tata Industrial Solutions Ltd',
+      icon: Building2,
+      headerColor: 'from-orange-950 via-slate-900 to-orange-950',
+      accentColor: 'text-orange-400 bg-orange-500/10 border-orange-500/30',
+      tagline: 'Acknowledge purchase orders, dispatch shipments with fleet details, upload invoices, and track performance scores.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Acknowledge & Confirm POs',
+          desc: 'Accept customer purchase orders, request clarifications, or dispatch shipments.',
+          actionText: 'Supplier Portal',
+          actionPath: '/supplier',
+        },
+        {
+          step: 2,
+          title: 'Dispatch Shipments & Invoices',
+          desc: 'Submit carrier vehicle information, driver details, and upload vendor invoices for 3-way matching.',
+          actionText: 'Manage Dispatches',
+          actionPath: '/supplier',
+        },
+      ],
+      authorizedData: [
+        { title: 'Assigned Purchase Orders', desc: 'View and acknowledge POs specifically assigned to your supplier code.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Invoices & Settlements', desc: 'Upload invoices and monitor 3-way match & payout status.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 1,
+      pipelineNotes: 'Your portal provides isolated access to your order commitments and fulfillment milestones.',
+      proTips: [
+        'Maintaining a high QC score (>90%) secures Tier-1 preferential purchasing allocation.',
       ],
     },
   };

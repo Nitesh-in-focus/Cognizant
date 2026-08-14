@@ -25,12 +25,14 @@ import {
   X,
   CreditCard,
   Barcode,
+  Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { TruckTrackingMap, Waypoint } from '../components/maps/TruckTrackingMap';
 import { Modal } from '../components/common/Modal';
+import { getAiEtaPrediction, EtaPredictionResult } from '../services/ai/etaPredictionService';
 
 export const Shipments: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar } = useApp();
@@ -41,6 +43,8 @@ export const Shipments: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'map' | 'manifest' | 'driver' | 'milestones' | 'eway'>('map');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [aiEtaState, setAiEtaState] = useState<EtaPredictionResult | null>(null);
+  const [runningAiEta, setRunningAiEta] = useState(false);
 
   useEffect(() => {
     fetchShipments();
@@ -100,11 +104,37 @@ export const Shipments: React.FC = () => {
     showSnackbar(`Live map switched to ${shp.shipment_number}`, 'info');
   };
 
+  const handleRunAiEta = async (shp: any) => {
+    try {
+      setRunningAiEta(true);
+      const res = await getAiEtaPrediction({
+        shipment_id: shp.shipment_id,
+        shipment_number: shp.shipment_number,
+        origin: shp.origin || 'Mumbai',
+        destination: shp.warehouses?.city || 'Pune Hub',
+        current_lat: 18.98,
+        current_lng: 73.45,
+        dest_lat: 18.52,
+        dest_lng: 73.85,
+        scheduled_arrival: shp.expected_arrival || new Date().toISOString(),
+        current_speed_kmh: 52,
+        carrier_name: 'BlueDart Logistics',
+      });
+      setAiEtaState(res);
+      showSnackbar(`AI ETA calculated: ${res.predicted_eta_formatted} (${res.delay_probability}% delay risk)`, 'success');
+    } catch (err: any) {
+      showSnackbar('AI ETA calculation failed: ' + err.message, 'error');
+    } finally {
+      setRunningAiEta(false);
+    }
+  };
+
   // Clicking the button opens the detail inspector modal
   const handleOpenDetail = (shp: any) => {
     setActiveTracking(shp);
     setSelectedDetailShipment(shp);
     setActiveTab('map');
+    handleRunAiEta(shp);
   };
 
   return (

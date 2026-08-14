@@ -15,15 +15,19 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { Sparkles } from 'lucide-react';
+import { getAiDockRecommendation, DockRecommendationResult } from '../services/ai/dockRecommendationService';
 
 export const YardManagement: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canAssignDock, logAuditAction } = useApp();
 
   const [entries, setEntries] = useState<any[]>([]);
   const [docks, setDocks] = useState<any[]>([]);
   const [trucks, setTrucks] = useState<any[]>([]);
   const [yards, setYards] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [aiDockRec, setAiDockRec] = useState<DockRecommendationResult | null>(null);
+  const [evaluatingDock, setEvaluatingDock] = useState(false);
 
   // Gate Check-in Modal
   const [openCheckIn, setOpenCheckIn] = useState(false);
@@ -118,7 +122,43 @@ export const YardManagement: React.FC = () => {
     }
   };
 
+  const handleRunAiDockRec = async () => {
+    try {
+      setEvaluatingDock(true);
+      const availableDocks = docks.map((d) => ({
+        dock_id: d.dock_id,
+        dock_number: d.dock_number,
+        dock_type: d.dock_type || 'INBOUND',
+        status: d.status || 'AVAILABLE',
+        current_queue: d.status === 'AVAILABLE' ? 0 : 1,
+        capacity_pallets: 50,
+      }));
+
+      const res = await getAiDockRecommendation({
+        truck_id: assignDialog.entry?.truck_id || 'TRUCK',
+        vehicle_number: assignDialog.entry?.trucks?.vehicle_number || 'TRUCK-DEMO',
+        truck_type: 'Heavy 10-Ton Container',
+        product_category: 'Standard Pallet Cargo',
+        waiting_minutes: assignDialog.entry?.waiting_minutes || 10,
+        available_docks: availableDocks as any,
+      });
+
+      setAiDockRec(res);
+      setSelectedDockId(res.recommended_dock_id);
+      showSnackbar(`AI Dock recommendation: ${res.recommended_dock_number} (${res.confidence}% confidence)`, 'success');
+    } catch (err: any) {
+      showSnackbar('AI Dock Recommendation failed: ' + err.message, 'error');
+    } finally {
+      setEvaluatingDock(false);
+    }
+  };
+
   const handleAssignDock = async () => {
+    if (!canAssignDock()) {
+      showSnackbar('Permission Denied: Only Warehouse/Yard Managers can assign dock bays.', 'error');
+      return;
+    }
+
     try {
       if (!assignDialog.entry || !selectedDockId) return;
 
@@ -146,6 +186,11 @@ export const YardManagement: React.FC = () => {
         .from('docks')
         .update({ status: 'OCCUPIED' })
         .eq('dock_id', selectedDockId);
+
+      await logAuditAction('DOCK_ASSIGNED', 'dock_assignments', selectedDockId, {
+        vehicle_number: assignDialog.entry?.trucks?.vehicle_number,
+        yard_entry_id: assignDialog.entry?.yard_entry_id,
+      });
 
       addAlert({
         title: `Dock Assigned: ${assignDialog.entry.trucks?.vehicle_number}`,
@@ -490,9 +535,18 @@ export const YardManagement: React.FC = () => {
           </p>
 
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">
-              Available Loading Dock Bay
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="font-semibold text-slate-700">Available Loading Dock Bay</label>
+              <button
+                type="button"
+                onClick={handleRunAiDockRec}
+                disabled={evaluatingDock}
+                className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded font-bold border border-indigo-200 flex items-center gap-1"
+              >
+                <Sparkles className="w-3 h-3 text-indigo-600" />
+                <span>{evaluatingDock ? 'Calculating...' : 'AI Optimal Bay'}</span>
+              </button>
+            </div>
             <select
               value={selectedDockId}
               onChange={(e) => setSelectedDockId(e.target.value)}

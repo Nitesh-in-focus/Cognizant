@@ -23,7 +23,7 @@ import { Modal } from '../components/common/Modal';
 import { extractInvoiceFields, OcrInvoiceResult } from '../lib/ocr';
 
 export const Invoices: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApproveInvoice, logAuditAction } = useApp();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [pos, setPos] = useState<any[]>([]);

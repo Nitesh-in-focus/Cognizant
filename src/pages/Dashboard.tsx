@@ -534,114 +534,169 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenGuide, defaultTab })
       {/* ========================================================================= */}
       {dashboardTab === 'overview' && (
         <>
-          {/* 👑 ROLE: ADMIN (Executive Operations Director) */}
-          {role === 'ADMIN' && (
+          {/* 👑 ROLE: SYSTEM_ADMIN / ADMIN */}
+          {(role === 'SYSTEM_ADMIN' || role === 'ADMIN') && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
                 <KpiCard
                   label="Active Shipments"
-              value={loading ? '-' : metrics.activeShipments}
-              subtext="Inbound transit"
-              trend={{ value: '+8.2%', isPositive: true }}
-              icon={Truck}
-              onClick={() => navigate('/shipments')}
-            />
-            <KpiCard
-              label="Delayed Shipments"
-              value={loading ? '-' : metrics.delayedShipments}
-              subtext="12.5% of active"
-              variant="warning"
-              trend={{ value: '1 alert', isPositive: false }}
-              icon={Clock}
-              onClick={() => navigate('/shipments')}
-            />
-            <KpiCard
-              label="Trucks in Yard"
-              value={loading ? '-' : metrics.trucksInYard}
-              subtext="Gate queue & bays"
-              icon={Boxes}
-              onClick={() => navigate('/yard')}
-            />
-            <KpiCard
-              label="Dock Utilization"
-              value={`${metrics.dockUtilization}%`}
-              subtext="4 of 6 active"
-              variant="success"
-              trend={{ value: 'Optimal', isPositive: true }}
-              icon={Boxes}
-              onClick={() => navigate('/yard')}
-            />
-            <KpiCard
-              label="Invoice Exceptions"
-              value={loading ? '-' : metrics.invoiceExceptions}
-              subtext="3-way match holds"
-              variant={metrics.invoiceExceptions > 0 ? 'error' : 'default'}
-              trend={{ value: 'Action req', isPositive: false }}
-              icon={AlertTriangle}
-              onClick={() => navigate('/exceptions')}
-            />
-            <KpiCard
-              label="Payment on Hold"
-              value={loading ? '-' : `₹${(metrics.paymentOnHold / 1000).toFixed(1)}k`}
-              subtext="Discrepancy holds"
-              variant="error"
-              icon={CreditCard}
-              onClick={() => navigate('/payments')}
-            />
-          </div>
+                  value={loading ? '-' : metrics.activeShipments}
+                  subtext="Inbound transit"
+                  trend={{ value: '+8.2%', isPositive: true }}
+                  icon={Truck}
+                  onClick={() => navigate('/shipments')}
+                />
+                <KpiCard
+                  label="Delayed Shipments"
+                  value={loading ? '-' : metrics.delayedShipments}
+                  subtext="12.5% of active"
+                  variant="warning"
+                  trend={{ value: '1 alert', isPositive: false }}
+                  icon={Clock}
+                  onClick={() => navigate('/shipments')}
+                />
+                <KpiCard
+                  label="Trucks in Yard"
+                  value={loading ? '-' : metrics.trucksInYard}
+                  subtext="Gate queue & bays"
+                  icon={Boxes}
+                  onClick={() => navigate('/yard')}
+                />
+                <KpiCard
+                  label="Dock Utilization"
+                  value={`${metrics.dockUtilization}%`}
+                  subtext="4 of 6 active"
+                  variant="success"
+                  trend={{ value: 'Optimal', isPositive: true }}
+                  icon={Boxes}
+                  onClick={() => navigate('/yard')}
+                />
+                <KpiCard
+                  label="Invoice Exceptions"
+                  value={loading ? '-' : metrics.invoiceExceptions}
+                  subtext="3-way match holds"
+                  variant={metrics.invoiceExceptions > 0 ? 'error' : 'default'}
+                  trend={{ value: 'Action req', isPositive: false }}
+                  icon={AlertTriangle}
+                  onClick={() => navigate('/exceptions')}
+                />
+                <KpiCard
+                  label="Payment on Hold"
+                  value={loading ? '-' : `₹${(metrics.paymentOnHold / 1000).toFixed(1)}k`}
+                  subtext="Discrepancy holds"
+                  variant="error"
+                  icon={CreditCard}
+                  onClick={() => navigate('/payments')}
+                />
+              </div>
 
-          {/* Admin Main Highway Map */}
-          <TruckTrackingMap />
+              {/* Admin Main Highway Map */}
+              <TruckTrackingMap />
 
-          {/* Admin Dual Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">Procurement Spend by Category</h3>
-                  <span className="text-xs text-slate-500">Live spend aggregation from confirmed Purchase Orders</span>
+              {/* Admin Dual Charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Procurement Spend by Category</h3>
+                      <span className="text-xs text-slate-500">Live spend aggregation from confirmed Purchase Orders</span>
+                    </div>
+                    <span className="text-xs font-bold text-blue-600">Total: ₹11.55L</span>
+                  </div>
+                  <div className="h-60 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={spendData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} />
+                        <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickFormatter={(v) => `₹${v / 1000}k`} />
+                        <RechartsTooltip formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Spend']} />
+                        <Bar dataKey="value" fill="#2563EB" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-                <span className="text-xs font-bold text-blue-600">Total: ₹11.55L</span>
-              </div>
-              <div className="h-60 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={spendData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} />
-                    <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickFormatter={(v) => `₹${v / 1000}k`} />
-                    <RechartsTooltip formatter={(val: any) => [`₹${Number(val).toLocaleString()}`, 'Spend']} />
-                    <Bar dataKey="value" fill="#2563EB" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
 
-            <div className="lg:col-span-5 bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">3-Way Match Discrepancy Breakdown</h3>
-                  <span className="text-xs text-slate-500">Autonomous OCR & Variance Engine</span>
+                <div className="lg:col-span-5 bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">3-Way Match Discrepancy Breakdown</h3>
+                      <span className="text-xs text-slate-500">Autonomous OCR & Variance Engine</span>
+                    </div>
+                  </div>
+                  <div className="h-60 w-full flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={exceptionChartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
+                          {exceptionChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               </div>
-              <div className="h-60 w-full flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={exceptionChartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
-                      {exceptionChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+            </>
+          )}
 
-      {/* 📄 ROLE: PROCUREMENT_MANAGER */}
-      {role === 'PROCUREMENT_MANAGER' && (
+          {/* 🚚 ROLE: LOGISTICS_MANAGER */}
+          {role === 'LOGISTICS_MANAGER' && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+                <KpiCard
+                  label="Active Inbound Shipments"
+                  value={loading ? '-' : metrics.activeShipments}
+                  subtext="Corridor fleet active"
+                  variant="success"
+                  icon={Truck}
+                  onClick={() => navigate('/shipments')}
+                />
+                <KpiCard
+                  label="Delayed Shipments"
+                  value={loading ? '-' : metrics.delayedShipments}
+                  subtext="ETA exceeded"
+                  variant="warning"
+                  icon={Clock}
+                  onClick={() => navigate('/shipments')}
+                />
+                <KpiCard
+                  label="Fleet in Transit"
+                  value="18 Trucks"
+                  subtext="GPS Telematics live"
+                  variant="success"
+                  icon={Radio}
+                  onClick={() => navigate('/trucks')}
+                />
+                <KpiCard
+                  label="Corridor Congestion"
+                  value="1 Alert"
+                  subtext="Toll plaza bottleneck"
+                  variant="warning"
+                  icon={AlertTriangle}
+                />
+                <KpiCard
+                  label="Average Speed"
+                  value="48 km/h"
+                  subtext="Nominal transit rate"
+                  icon={Activity}
+                />
+                <KpiCard
+                  label="Predicted On-Time"
+                  value="94.2%"
+                  subtext="AI ETA confidence"
+                  variant="success"
+                  icon={Sparkles}
+                />
+              </div>
+
+              {/* Highway GPS Corridor */}
+              <TruckTrackingMap />
+            </>
+          )}
+
+          {/* 📄 ROLE: PROCUREMENT_MANAGER */}
+          {role === 'PROCUREMENT_MANAGER' && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
             <KpiCard
@@ -1056,8 +1111,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenGuide, defaultTab })
         </>
       )}
 
-      {/* 🔍 ROLE: RECEIVING_OPERATOR */}
-      {role === 'RECEIVING_OPERATOR' && (
+      {/* 🔍 ROLE: RECEIVING_QC_OPERATOR */}
+      {(role === 'RECEIVING_OPERATOR' || role === 'RECEIVING_QC_OPERATOR') && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
             <KpiCard
@@ -1352,6 +1407,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenGuide, defaultTab })
             </div>
           </div>
         </>
+      )}
+
+      {/* 🏢 ROLE: SUPPLIER (External Partner Portal) */}
+      {role === 'SUPPLIER' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm text-center space-y-4 max-w-2xl mx-auto my-6">
+          <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+            <Building2 className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Dedicated Supplier Portal Active</h2>
+            <p className="text-sm text-slate-500 max-w-md mx-auto mt-1">
+              You are currently logged in as a verified supplier. Access your isolated PO acknowledgments, dispatch shipments, upload invoices, and view QA ratings.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/supplier')}
+            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-200 transition-all inline-flex items-center gap-2"
+          >
+            <span>Open Supplier Portal Workspace</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       )}
     </>
   )}
