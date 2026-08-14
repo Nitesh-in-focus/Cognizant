@@ -59,6 +59,22 @@ export const AppSidebar: React.FC = () => {
           ],
         },
       ]
+    : role === 'TRUCK_DRIVER'
+    ? [
+        {
+          label: 'Driver App Console',
+          items: [
+            { title: 'Driver Trip Console', path: '/driver', icon: Truck, badge: 'ACTIVE' },
+            {
+              title: 'Driver Alerts',
+              path: '/alerts',
+              icon: Bell,
+              badge: unreadAlertsCount > 0 ? String(unreadAlertsCount) : undefined,
+              badgeColor: 'bg-rose-500 text-white',
+            },
+          ],
+        },
+      ]
     : [
         {
           label: 'Control Tower',

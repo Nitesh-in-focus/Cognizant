@@ -70,6 +70,7 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
     RECEIVING_OPERATOR: { label: 'Dock QA Inspector', badge: 'Receiving' },
     FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
     SUPPLIER: { label: 'Tata Industrial Solutions', badge: 'Supplier' },
+    TRUCK_DRIVER: { label: 'Carrier Fleet Driver', badge: 'Driver' },
   };
 
   const handleLogout = () => {

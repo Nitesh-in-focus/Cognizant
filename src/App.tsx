@@ -7,6 +7,7 @@ import { ScenarioRunner } from './components/layout/ScenarioRunner';
 import { CommandSearch } from './components/common/CommandSearch';
 import { ToastContainer } from './components/common/Toast';
 import { SystemGuideModal } from './components/common/SystemGuideModal';
+import { AiChatDrawer } from './components/common/AiChatDrawer';
 
 // Pages
 import Auth from './pages/Auth';
@@ -27,6 +28,7 @@ import Analytics from './pages/Analytics';
 import Alerts from './pages/Alerts';
 import { QualityCheckPage } from './pages/QualityCheck';
 import { SupplierPortal } from './pages/supplier/SupplierPortal';
+import { DriverPortal } from './pages/driver/DriverPortal';
 
 export const App: React.FC = () => {
   const location = useLocation();
@@ -81,6 +83,8 @@ export const App: React.FC = () => {
             <Route path="/login" element={<Navigate to="/" replace />} />
             <Route path="/supplier" element={<SupplierPortal />} />
             <Route path="/supplier/*" element={<SupplierPortal />} />
+            <Route path="/driver" element={<DriverPortal />} />
+            <Route path="/driver/*" element={<DriverPortal />} />
             <Route path="/quality" element={<QualityCheckPage />} />
             <Route path="/traceability" element={<Traceability />} />
             <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
@@ -116,6 +120,8 @@ export const App: React.FC = () => {
         isOpen={openGuide}
         onClose={handleCloseGuide}
       />
+
+      <AiChatDrawer />
 
       <ToastContainer />
     </div>

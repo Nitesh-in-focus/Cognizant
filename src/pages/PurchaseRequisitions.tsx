@@ -15,6 +15,7 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { getAiSupplierRecommendation } from '../services/ai/supplierRecommendationService';
 
 export const PurchaseRequisitions: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, canApprovePR, logAuditAction } = useApp();
@@ -132,6 +133,8 @@ export const PurchaseRequisitions: React.FC = () => {
     }
 
     try {
+      const targetPr = prs.find((p) => p.pr_id === prId);
+
       const { error } = await supabase
         .from('purchase_requisitions')
         .update({
@@ -148,6 +151,99 @@ export const PurchaseRequisitions: React.FC = () => {
         prId,
         { status }
       );
+
+      // Section 3 & 4 of updates2.md: If PR is APPROVED, automatically run AI Supplier Selection & Generate Draft PO
+      if (status === 'APPROVED' && targetPr) {
+        try {
+          const { data: suppliersData } = await supabase.from('suppliers').select('*');
+          const { data: perfData } = await supabase.from('supplier_performance').select('*');
+
+          const candidates = (suppliersData || []).map((s) => {
+            const perf = perfData?.find((p) => p.supplier_id === s.supplier_id);
+            return {
+              supplier_id: s.supplier_id,
+              supplier_name: s.supplier_name,
+              city: s.city || 'India',
+              quality_score: Number(perf?.quality_score) || 92,
+              delivery_score: Number(perf?.delivery_score) || 90,
+              overall_score: Number(perf?.overall_score) || 91,
+              unit_price: 50,
+              lead_time_days: 3,
+              exception_count: 0,
+              capacity_units: 5000,
+            };
+          });
+
+          if (candidates.length > 0) {
+            const requestedQty = targetPr.pr_items?.[0]?.requested_quantity || 500;
+            const targetProductId = targetPr.pr_items?.[0]?.product_id || '';
+            const rec = await getAiSupplierRecommendation(prId, targetProductId, requestedQty, candidates);
+
+            // Generate PO in state DRAFT_AUTO_GENERATED
+            const poSuffix = Math.floor(1000 + Math.random() * 9000);
+            const poNumber = `PO-2026-${poSuffix}`;
+            const unitPrice = 50.00;
+            const subtotal = requestedQty * unitPrice;
+            const taxAmount = subtotal * 0.18;
+            const totalAmount = subtotal + taxAmount;
+
+            const { data: newPo, error: poErr } = await supabase
+              .from('purchase_orders')
+              .insert([
+                {
+                  po_number: poNumber,
+                  pr_id: prId,
+                  supplier_id: rec.recommended_supplier_id,
+                  warehouse_id: targetPr.warehouse_id,
+                  status: 'DRAFT_AUTO_GENERATED',
+                  subtotal,
+                  tax_amount: taxAmount,
+                  total_amount: totalAmount,
+                  order_date: new Date().toISOString().split('T')[0],
+                  payment_terms: 'NET 30',
+                },
+              ])
+              .select()
+              .single();
+
+            if (!poErr && newPo) {
+              if (targetProductId) {
+                await supabase.from('po_items').insert([
+                  {
+                    po_id: newPo.po_id,
+                    product_id: targetProductId,
+                    ordered_quantity: requestedQty,
+                    unit_price: unitPrice,
+                    tax_rate: 18,
+                    line_total: subtotal,
+                  },
+                ]);
+              }
+
+              await logAuditAction(
+                'PO_AUTO_GENERATED_FROM_PR',
+                'purchase_orders',
+                newPo.po_id,
+                {
+                  pr_id: prId,
+                  recommended_supplier: rec.recommended_supplier_name,
+                  confidence: rec.confidence,
+                  status: 'DRAFT_AUTO_GENERATED',
+                }
+              );
+
+              showSnackbar(
+                `Requisition #${targetPr.pr_number} approved! AI selected ${rec.recommended_supplier_name} (${rec.confidence}% match) and generated draft PO #${poNumber}.`,
+                'success'
+              );
+              triggerRefresh();
+              return;
+            }
+          }
+        } catch (autoPoErr) {
+          console.warn('Auto PO generation skipped:', autoPoErr);
+        }
+      }
 
       showSnackbar(`PR marked as ${status}`, 'info');
       triggerRefresh();

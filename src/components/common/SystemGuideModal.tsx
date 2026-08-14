@@ -493,6 +493,40 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         'Maintaining a high QC score (>90%) secures Tier-1 preferential purchasing allocation.',
       ],
     },
+    TRUCK_DRIVER: {
+      roleTitle: 'Inbound Carrier Fleet Driver',
+      roleBadge: 'Driver Console',
+      department: 'BlueDart Inbound Fleet',
+      icon: Truck,
+      headerColor: 'from-cyan-950 via-slate-900 to-cyan-950',
+      accentColor: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30',
+      tagline: 'Accept dispatch trips, broadcast satellite GPS coordinates, and view allocated facility dock bays.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Acknowledge Trip Assignment',
+          desc: 'Review manifest origin, destination warehouse, and confirm trip acceptance.',
+          actionText: 'Driver Console',
+          actionPath: '/driver',
+        },
+        {
+          step: 2,
+          title: 'Transmit Live GPS Telemetry',
+          desc: 'Broadcast real-time satellite coordinates and speed along the transit highway.',
+          actionText: 'Transmit Ping',
+          actionPath: '/driver',
+        },
+      ],
+      authorizedData: [
+        { title: 'Assigned Shipment Manifest', desc: 'View current cargo load, origin, and destination warehouse.', accessLevel: 'READ_ONLY' },
+        { title: 'Live GPS Telemetry', desc: 'Broadcast authenticated location updates.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 2,
+      pipelineNotes: 'Your mobile console transmits highway telematics and displays gate & dock assignments.',
+      proTips: [
+        'If docks are congested, your console will indicate your allocated staging yard parking slot.',
+      ],
+    },
   };
 
   const config = roleConfigs[role] || roleConfigs.ADMIN;

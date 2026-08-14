@@ -4,9 +4,7 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Scan,
   PenLine,
-  Sparkles,
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
@@ -14,11 +12,9 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
-import { OcrScanPanel } from '../components/common/OcrScanPanel';
-import { OcrInvoiceResult } from '../lib/ocr';
 
 export const GoodsReceipts: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canFinalizeQC, logAuditAction } = useApp();
 
   const [grns, setGrns] = useState<any[]>([]);
   const [pos, setPos] = useState<any[]>([]);
@@ -26,9 +22,8 @@ export const GoodsReceipts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Create GRN Modal
+  // Create GRN Modal (100% Manual Intake - Section 18 of updates2.md)
   const [openCreate, setOpenCreate] = useState(false);
-  const [grnInputMode, setGrnInputMode] = useState<'manual' | 'ocr'>('manual');
   const [newGrn, setNewGrn] = useState({
     po_id: '',
     product_id: '',
@@ -80,6 +75,11 @@ export const GoodsReceipts: React.FC = () => {
   };
 
   const handleCreateGrn = async () => {
+    if (!canFinalizeQC()) {
+      showSnackbar('Permission Denied: Only Receiving & QC Operators can log Goods Receipt Notes (GRN).', 'error');
+      return;
+    }
+
     try {
       if (!newGrn.po_id || !newGrn.product_id) {
         showSnackbar('Please select PO and Product item', 'error');
@@ -117,6 +117,13 @@ export const GoodsReceipts: React.FC = () => {
           inspection_status: newGrn.damaged_quantity > 0 ? 'PARTIAL' : 'ACCEPTED',
         },
       ]);
+
+      await logAuditAction('GRN_MANUAL_LOGGED', 'goods_receipts', grn.grn_id, {
+        grn_number: grnNumber,
+        received_quantity: newGrn.received_quantity,
+        damaged_quantity: newGrn.damaged_quantity,
+        accepted_quantity: acceptedQty,
+      });
 
       if (newGrn.damaged_quantity > 0) {
         addAlert({
@@ -272,24 +279,24 @@ export const GoodsReceipts: React.FC = () => {
         </div>
       </div>
 
-      {/* Create GRN Modal */}
+      {/* Create GRN Modal (100% Manual Intake - Section 18 of updates2.md) */}
       <Modal
         isOpen={openCreate}
-        onClose={() => { setOpenCreate(false); setGrnInputMode('manual'); }}
-        title="Inbound Receiving & QA Inspection"
-        subtitle="Log arriving shipment counts — fill manually or scan a delivery challan with OCR"
-        maxWidth="xl"
+        onClose={() => setOpenCreate(false)}
+        title="Inbound Receiving & Dock Intake"
+        subtitle="Log arriving shipment counts directly verified at the unloading bay (Manual Only)"
+        maxWidth="lg"
         footer={
           <>
             <button
-              onClick={() => { setOpenCreate(false); setGrnInputMode('manual'); }}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              onClick={() => setOpenCreate(false)}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleCreateGrn}
-              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5"
+              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
             >
               <ClipboardCheck className="w-3.5 h-3.5" />
               Confirm & Log Intake
@@ -298,81 +305,7 @@ export const GoodsReceipts: React.FC = () => {
         }
       >
         <div className="space-y-4 text-xs">
-
-          {/* ── Mode Toggle ── */}
-          <div className="flex rounded-xl bg-slate-100 p-1 gap-1 border border-slate-200">
-            <button
-              onClick={() => setGrnInputMode('manual')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                grnInputMode === 'manual' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <PenLine className="w-3.5 h-3.5" />
-              Manual Entry
-            </button>
-            <button
-              onClick={() => setGrnInputMode('ocr')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                grnInputMode === 'ocr' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Scan className="w-3.5 h-3.5" />
-              Scan Delivery Challan (OCR)
-            </button>
-          </div>
-
-          {/* ── OCR Panel ── */}
-          {grnInputMode === 'ocr' && (
-            <div className="rounded-xl border border-purple-200 bg-purple-50/30 p-4 space-y-2">
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles className="w-4 h-4 text-purple-600" />
-                <span className="font-bold text-purple-900 text-xs">Tesseract.js OCR — Delivery Challan Scanner</span>
-                <span className="text-[10px] text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded font-bold border border-purple-200">FREE • BROWSER-BASED</span>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                Upload a delivery challan or packing list image. OCR will extract PO reference, quantities, and any damage notes — then auto-fill the GRN form below.
-              </p>
-              <OcrScanPanel
-                documentLabel="delivery challan or packing list"
-                onExtracted={(r: OcrInvoiceResult) => {
-                  // Map OCR fields → GRN form
-                  if (r.poNumber) {
-                    const matched = pos.find((p: any) =>
-                      p.po_number?.toLowerCase().includes(r.poNumber!.toLowerCase()) ||
-                      r.poNumber!.toLowerCase().includes(p.po_number?.toLowerCase())
-                    );
-                    if (matched) setNewGrn((prev) => ({ ...prev, po_id: matched.po_id }));
-                  }
-                  if (r.quantity && r.quantity > 0) {
-                    setNewGrn((prev) => ({ ...prev, received_quantity: r.quantity! }));
-                  } else if (r.totalAmount && r.totalAmount > 0 && r.totalAmount < 100000) {
-                    setNewGrn((prev) => ({ ...prev, received_quantity: Math.round(r.totalAmount!) }));
-                  }
-                  if (r.damagedQuantity !== null && r.damagedQuantity >= 0) {
-                    setNewGrn((prev) => ({ ...prev, damaged_quantity: r.damagedQuantity! }));
-                  }
-                  // Match product SKU
-                  if (r.productName) {
-                    const matchedProd = products.find((p: any) =>
-                      p.product_name.toLowerCase().includes(r.productName!.toLowerCase()) ||
-                      r.productName!.toLowerCase().includes(p.product_name.toLowerCase())
-                    );
-                    if (matchedProd) setNewGrn((prev) => ({ ...prev, product_id: matchedProd.product_id }));
-                  }
-                  if (r.rawText) {
-                    setNewGrn((prev) => ({
-                      ...prev,
-                      notes: `Challan OCR Scan (${r.confidence}% confidence): ${r.lines.slice(0, 3).join(' | ')}`,
-                    }));
-                  }
-                  showSnackbar('Challan OCR complete! Arriving intake quantities auto-populated below.', 'success');
-                }}
-                onError={(msg) => showSnackbar(`OCR Error: ${msg}`, 'error')}
-              />
-            </div>
-          )}
-
-          {/* ── Manual Form ── */}
+          {/* Manual Form */}
           <div>
             <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
               <span>Target Purchase Order</span>
@@ -385,7 +318,7 @@ export const GoodsReceipts: React.FC = () => {
             >
               {pos.map((p) => (
                 <option key={p.po_id} value={p.po_id}>
-                  {p.po_number} (Val: ₹{Number(p.total_amount).toLocaleString()})
+                  {p.po_number} ({p.suppliers?.supplier_name} • Val: ₹{Number(p.total_amount).toLocaleString()})
                 </option>
               ))}
             </select>
@@ -411,9 +344,8 @@ export const GoodsReceipts: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Total Received Quantity</span>
-                {newGrn.received_quantity && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">OCR ✓</span>}
+              <label className="font-semibold text-slate-700 block mb-1.5">
+                Total Received Quantity (Units)
               </label>
               <input
                 type="number"
@@ -424,7 +356,7 @@ export const GoodsReceipts: React.FC = () => {
             </div>
             <div>
               <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Damaged / Defective Quantity</span>
+                <span>Damaged / Defective Count</span>
                 {newGrn.damaged_quantity > 0 && <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">Flagged</span>}
               </label>
               <input
@@ -452,14 +384,14 @@ export const GoodsReceipts: React.FC = () => {
               </div>
               <div className="text-[11px] text-slate-500 mt-0.5">
                 {newGrn.damaged_quantity > 0
-                  ? 'Damage recorded — exception + debit note will be auto-generated.'
-                  : 'All units accepted. No exceptions triggered.'}
+                  ? 'Damage recorded — exception + debit note will be auto-generated for Finance.'
+                  : 'All physical units accepted. Feeds directly into 3-way match reconciliation.'}
               </div>
             </div>
           </div>
 
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">QA Inspector Notes</label>
+            <label className="font-semibold text-slate-700 block mb-1.5">QA Inspector Physical Notes</label>
             <textarea
               rows={2}
               value={newGrn.notes}

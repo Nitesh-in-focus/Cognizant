@@ -129,7 +129,23 @@ export const Auth: React.FC = () => {
       badge: 'Isolated',
       desc: 'PO acceptance, shipment dispatch, invoice submission, and QC ratings.',
     },
+    {
+      role: 'TRUCK_DRIVER' as UserRole,
+      title: 'Carrier Fleet Driver',
+      name: defaultPersonaUsers.TRUCK_DRIVER.full_name,
+      email: defaultPersonaUsers.TRUCK_DRIVER.email,
+      dept: 'BlueDart Logistics Fleet',
+      icon: Truck,
+      color: 'bg-cyan-600',
+      badge: 'Driver App',
+      desc: 'Accept/reject dispatches, live highway route, GPS beacon, and dock door assignment.',
+    },
   ];
+
+  const [otpInput, setOtpInput] = useState('');
+  const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
+
+  const { pendingOtpEmail, otpCooldownSeconds, requestLoginOtp, verifyLoginOtp, cancelLoginOtp } = useApp();
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,6 +174,7 @@ export const Auth: React.FC = () => {
           setLoading(false);
           return;
         }
+        navigate('/');
       } else {
         if (!email || !password) {
           setErrorMessage('Please enter email and password.');
@@ -165,15 +182,17 @@ export const Auth: React.FC = () => {
           return;
         }
 
-        const res = await login(email, password);
-        if (!res.success) {
-          setErrorMessage(res.error || 'Invalid credentials.');
+        // Section 1 of updates2.md: Every login requires OTP verification
+        const otpRes = await requestLoginOtp(email);
+        if (!otpRes.success) {
+          setErrorMessage(otpRes.error || 'Failed to dispatch verification code.');
           setLoading(false);
           return;
         }
+        if (otpRes.devOtp) {
+          setDevOtpHint(otpRes.devOtp);
+        }
       }
-
-      navigate('/');
     } catch (err: any) {
       setErrorMessage(err.message || 'Authentication error.');
     } finally {
@@ -183,9 +202,43 @@ export const Auth: React.FC = () => {
 
   const handlePersonaQuickLogin = async (selectedRole: UserRole) => {
     setLoading(true);
-    await loginAsPersona(selectedRole);
+    setErrorMessage('');
+    const targetPersona = defaultPersonaUsers[selectedRole];
+    if (targetPersona) {
+      const otpRes = await requestLoginOtp(targetPersona.email);
+      if (otpRes.devOtp) {
+        setDevOtpHint(otpRes.devOtp);
+      }
+    }
     setLoading(false);
-    navigate('/');
+  };
+
+  const handleOtpVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingOtpEmail) return;
+    setLoading(true);
+    setErrorMessage('');
+
+    const res = await verifyLoginOtp(pendingOtpEmail, otpInput);
+    setLoading(false);
+
+    if (res.success) {
+      setOtpInput('');
+      setDevOtpHint(null);
+      // Route based on role
+      const persona = Object.values(defaultPersonaUsers).find(
+        (p) => p.email.toLowerCase() === pendingOtpEmail.toLowerCase()
+      );
+      if (persona?.role === 'SUPPLIER') {
+        navigate('/supplier');
+      } else if (persona?.role === 'TRUCK_DRIVER') {
+        navigate('/driver');
+      } else {
+        navigate('/');
+      }
+    } else {
+      setErrorMessage(res.error || 'Invalid OTP verification code.');
+    }
   };
 
   return (
@@ -480,6 +533,102 @@ export const Auth: React.FC = () => {
             </form>
           </div>
         </div>
+
+        {/* 2-Factor Email OTP Verification Modal Overlay */}
+        {pendingOtpEmail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-100 relative">
+              <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto mb-4">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+
+              <h2 className="text-xl font-bold text-center text-white">Two-Factor Authentication</h2>
+              <p className="text-xs text-slate-400 text-center mt-1.5 leading-relaxed">
+                A 6-digit verification code has been dispatched to your registered corporate email:
+              </p>
+              <div className="mt-2 text-center">
+                <span className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-xs font-semibold text-blue-400">
+                  {pendingOtpEmail}
+                </span>
+              </div>
+
+              {errorMessage && (
+                <div className="mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {devOtpHint && (
+                <div className="mt-3 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Demo Dispatch Code: <strong>{devOtpHint}</strong></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOtpInput(devOtpHint)}
+                    className="text-[11px] font-bold underline hover:text-emerald-300 ml-2 cursor-pointer"
+                  >
+                    Auto-Fill
+                  </button>
+                </div>
+              )}
+
+              <form onSubmit={handleOtpVerifySubmit} className="mt-5 space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block text-center mb-2 uppercase tracking-wider">
+                    Enter 6-Digit OTP
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    autoFocus
+                    placeholder="000000"
+                    value={otpInput}
+                    onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))}
+                    className="w-full text-center tracking-[0.5em] text-2xl font-mono py-3 bg-slate-950 border border-slate-700 rounded-xl text-white font-bold focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                  <span>Code expires in 5:00</span>
+                  <button
+                    type="button"
+                    disabled={otpCooldownSeconds > 0}
+                    onClick={() => requestLoginOtp(pendingOtpEmail)}
+                    className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 font-semibold"
+                  >
+                    {otpCooldownSeconds > 0 ? `Resend code in ${otpCooldownSeconds}s` : 'Resend Code'}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      cancelLoginOtp();
+                      setErrorMessage('');
+                      setOtpInput('');
+                      setDevOtpHint(null);
+                    }}
+                    className="w-1/3 py-2.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-800 text-slate-300 font-bold text-xs transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading || otpInput.length < 6}
+                    className="w-2/3 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <span>{loading ? 'Verifying...' : 'Verify & Launch Session'}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Footer Status Bar */}

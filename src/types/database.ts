@@ -63,7 +63,18 @@ export interface PurchaseOrder {
   pr_id?: string;
   supplier_id: string;
   warehouse_id: string;
-  status: 'DRAFT' | 'CONFIRMED' | 'DISPATCHED' | 'IN_TRANSIT' | 'RECEIVED' | 'CLOSED' | 'CANCELLED';
+  status:
+    | 'DRAFT'
+    | 'DRAFT_AUTO_GENERATED'
+    | 'READY_TO_SEND'
+    | 'SENT_TO_SUPPLIER'
+    | 'CONFIRMED'
+    | 'CHANGE_REQUESTED'
+    | 'DISPATCHED'
+    | 'IN_TRANSIT'
+    | 'RECEIVED'
+    | 'CLOSED'
+    | 'CANCELLED';
   subtotal?: number;
   tax_amount?: number;
   total_amount: number;
@@ -92,12 +103,19 @@ export interface Shipment {
   shipment_id: string;
   shipment_number: string;
   po_id: string;
-  destination_warehouse_id: string;
+  destination_warehouse_id?: string;
   origin?: string;
   dispatch_date?: string;
   expected_arrival?: string;
   actual_arrival?: string;
-  status: 'SCHEDULED' | 'DISPATCHED' | 'IN_TRANSIT' | 'ARRIVED' | 'DELIVERED';
+  departure_time?: string;
+  asn_number?: string;
+  location_source?: 'GPS_TELEMATICS' | 'DECLARED_BY_SUPPLIER' | 'SIMULATED';
+  driver_id?: string;
+  driver_status?: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  parking_slot?: string;
+  priority?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'PLANNED' | 'SCHEDULED' | 'DISPATCHED' | 'IN_TRANSIT' | 'ARRIVED_AT_FACILITY' | 'AT_GATE' | 'IN_YARD' | 'AT_DOCK' | 'UNLOADING' | 'UNLOADED' | 'RECEIVED' | 'ARRIVED' | 'DELIVERED';
   total_quantity: number;
   created_at?: string;
   purchase_orders?: PurchaseOrder;
@@ -112,7 +130,31 @@ export interface Truck {
   carrier_name?: string;
   truck_type?: string;
   capacity?: number;
+  driver_status?: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  last_location_update?: string;
   status: 'IDLE' | 'IN_TRANSIT' | 'IN_YARD' | 'AT_DOCK' | 'COMPLETED';
+}
+
+export interface AuthOtpCode {
+  otp_id: string;
+  email: string;
+  otp_code_hash: string;
+  expires_at: string;
+  attempts: number;
+  is_used: boolean;
+  created_at?: string;
+}
+
+export interface EmailLog {
+  log_id: string;
+  recipient_email: string;
+  recipient_role?: string;
+  subject: string;
+  template_name: string;
+  severity: string;
+  status: 'SENT' | 'FAILED' | 'RETRIED';
+  error_message?: string;
+  sent_at?: string;
 }
 
 export interface TruckLocation {

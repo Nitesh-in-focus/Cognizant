@@ -35,6 +35,7 @@ const ROLE_SEARCH_SCOPES: Record<UserRole, string[]> = {
   RECEIVING_OPERATOR: ['shipments', 'purchase_orders', 'quality_checks'],
   FINANCE_MANAGER: ['invoices', 'exceptions', 'purchase_orders'],
   SUPPLIER: ['purchase_orders', 'shipments', 'invoices', 'quality_checks'],
+  TRUCK_DRIVER: ['shipments', 'trucks'],
 };
 
 const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: string }[]> = {
@@ -91,6 +92,10 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
   SUPPLIER: [
     { label: 'Supplier Portal', path: '/supplier', color: 'text-indigo-600' },
     { label: 'Supplier Alerts', path: '/alerts', color: 'text-rose-600' },
+  ],
+  TRUCK_DRIVER: [
+    { label: 'Driver Trip Console', path: '/driver', color: 'text-cyan-600' },
+    { label: 'Driver Alerts', path: '/alerts', color: 'text-rose-600' },
   ],
 };
 

@@ -5,20 +5,22 @@ import {
   Truck,
   RefreshCw,
   Search,
-  Scan,
-  PenLine,
   Sparkles,
+  Send,
+  CheckCircle2,
+  Clock,
+  Building2,
+  FileCheck,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
-import { OcrScanPanel } from '../components/common/OcrScanPanel';
-import { OcrInvoiceResult } from '../lib/ocr';
 import { getAiSupplierRecommendation, SupplierAiRecommendation } from '../services/ai/supplierRecommendationService';
+import { routeNotification } from '../services/notifications/notificationRouter';
 
 export const PurchaseOrders: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApprovePO, logAuditAction } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApprovePO, canSendPO, logAuditAction } = useApp();
 
   const [pos, setPos] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -29,7 +31,6 @@ export const PurchaseOrders: React.FC = () => {
 
   // Create PO Modal state
   const [openCreate, setOpenCreate] = useState(false);
-  const [poInputMode, setPoInputMode] = useState<'manual' | 'ocr'>('manual');
   const [aiRec, setAiRec] = useState<SupplierAiRecommendation | null>(null);
   const [runningAiRec, setRunningAiRec] = useState(false);
   const [newPo, setNewPo] = useState({
@@ -268,34 +269,92 @@ export const PurchaseOrders: React.FC = () => {
     }
   };
 
-  const filteredPos = pos.filter(
-    (p) =>
+  const handleConfirmDraftPo = async (poId: string, poNumber: string) => {
+    if (!canApprovePO()) {
+      showSnackbar('Permission Denied: Only Procurement can review and confirm POs.', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('purchase_orders')
+        .update({ status: 'READY_TO_SEND' })
+        .eq('po_id', poId);
+      if (error) throw error;
+
+      await logAuditAction('PO_CONFIRMED_READY_TO_SEND', 'purchase_orders', poId, { po_number: poNumber });
+      showSnackbar(`PO #${poNumber} reviewed and confirmed. Ready to send to supplier.`, 'success');
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar(err.message, 'error');
+    }
+  };
+
+  const handleSendPoToSupplier = async (po: any) => {
+    if (!canSendPO()) {
+      showSnackbar('Permission Denied: Only authorized Procurement Officers can send POs.', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('purchase_orders')
+        .update({ status: 'SENT_TO_SUPPLIER' })
+        .eq('po_id', po.po_id);
+      if (error) throw error;
+
+      await logAuditAction('PO_SENT_TO_SUPPLIER', 'purchase_orders', po.po_id, {
+        po_number: po.po_number,
+        supplier: po.suppliers?.supplier_name,
+        amount: po.total_amount,
+      });
+
+      await routeNotification({
+        event_type: 'PO_AWAITING_ACCEPTANCE',
+        title: `PO #${po.po_number} Issued & Transmitted`,
+        message: `Purchase Order #${po.po_number} has been dispatched to ${po.suppliers?.supplier_name} for order acknowledgment.`,
+        severity: 'INFO',
+        supplier_id: po.supplier_id,
+        supplier_email: po.suppliers?.email,
+        entity_type: 'purchase_orders',
+        entity_number: po.po_number,
+        action_link: '/supplier',
+      });
+
+      showSnackbar(`PO #${po.po_number} sent to ${po.suppliers?.supplier_name || 'supplier'}! Awaiting acceptance.`, 'success');
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar(err.message, 'error');
+    }
+  };
+
+  const filteredPos = pos.filter((p) => {
+    const matchSearch =
       !searchQuery ||
       p.po_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.suppliers?.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      p.suppliers?.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchSearch;
+  });
 
   return (
     <div className="space-y-5 pb-12">
-      {/* Header (Section 27) */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <ShoppingCart className="w-5 h-5 text-blue-600" />
-            Purchase Orders (PO) Register
+            Purchase Orders (PO)
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Contractual purchase commitments, supplier rate agreements, and inbound shipment dispatch triggers.
+          <p className="text-xs text-slate-500 mt-1">
+            Contract commitments, supplier transmissions, and inbound delivery milestones.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <button
-            onClick={triggerRefresh}
-            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
-            title="Refresh POs"
+            onClick={() => triggerRefresh()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold transition-colors shadow-xs"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
           </button>
           <button
             onClick={() => setOpenCreate(true)}
@@ -324,7 +383,7 @@ export const PurchaseOrders: React.FC = () => {
         </div>
       </div>
 
-      {/* Purchase Orders Table (Sections 24, 25, 29) */}
+      {/* Purchase Orders Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
@@ -334,7 +393,7 @@ export const PurchaseOrders: React.FC = () => {
                 <th className="py-3 px-4">Supplier Partner</th>
                 <th className="py-3 px-4">Delivery Warehouse</th>
                 <th className="py-3 px-4">Line Items & Rates</th>
-                <th className="py-3 px-4">Total Amount (incl. GST)</th>
+                <th className="py-3 px-4">Total Amount</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -374,7 +433,7 @@ export const PurchaseOrders: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="text-slate-900 font-semibold">
-                          {item?.products?.product_name || 'Industrial Pumps'}
+                          {item?.products?.product_name || 'Industrial Material'}
                         </div>
                         <div className="text-[11px] text-slate-400">
                           {item?.ordered_quantity || 100} @ ₹{item?.unit_price || 50}
@@ -387,10 +446,31 @@ export const PurchaseOrders: React.FC = () => {
                         <StatusBadge status={po.status || 'CONFIRMED'} size="sm" />
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        {po.status === 'CONFIRMED' ? (
+                        {po.status === 'DRAFT_AUTO_GENERATED' ? (
+                          <button
+                            onClick={() => handleConfirmDraftPo(po.po_id, po.po_number)}
+                            className="px-2.5 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 font-semibold text-xs transition-colors inline-flex items-center gap-1 border border-amber-200 cursor-pointer"
+                          >
+                            <FileCheck className="w-3.5 h-3.5" />
+                            <span>Confirm Draft</span>
+                          </button>
+                        ) : po.status === 'READY_TO_SEND' ? (
+                          <button
+                            onClick={() => handleSendPoToSupplier(po)}
+                            className="px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 font-bold text-xs transition-colors inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>SEND TO SUPPLIER</span>
+                          </button>
+                        ) : po.status === 'SENT_TO_SUPPLIER' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            <Clock className="w-3 h-3" />
+                            <span>Awaiting Acceptance</span>
+                          </span>
+                        ) : po.status === 'CONFIRMED' ? (
                           <button
                             onClick={() => setSelectedPoForShipment(po)}
-                            className="px-2.5 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold text-xs transition-colors inline-flex items-center gap-1 border border-blue-200"
+                            className="px-2.5 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold text-xs transition-colors inline-flex items-center gap-1 border border-blue-200 cursor-pointer"
                           >
                             <Truck className="w-3.5 h-3.5" />
                             <span>Dispatch Shipment</span>
@@ -410,24 +490,24 @@ export const PurchaseOrders: React.FC = () => {
         </div>
       </div>
 
-      {/* Issue PO Modal */}
+      {/* Issue PO Modal (100% Manual - OCR Removed from PO as per Section 19) */}
       <Modal
         isOpen={openCreate}
-        onClose={() => { setOpenCreate(false); setPoInputMode('manual'); }}
+        onClose={() => { setOpenCreate(false); setAiRec(null); }}
         title="Issue Contractual Purchase Order"
-        subtitle="Generate a legal purchase order — fill manually or scan a document with OCR"
+        subtitle="Specify commercial terms, product quantities, and destination warehouse"
         maxWidth="xl"
         footer={
           <>
             <button
-              onClick={() => { setOpenCreate(false); setPoInputMode('manual'); }}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              onClick={() => { setOpenCreate(false); setAiRec(null); }}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleCreatePo}
-              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5"
+              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
             >
               <ShoppingCart className="w-3.5 h-3.5" />
               Confirm & Issue PO
@@ -436,94 +516,29 @@ export const PurchaseOrders: React.FC = () => {
         }
       >
         <div className="space-y-4 text-xs">
-
-          {/* ── Mode Toggle ── */}
-          <div className="flex rounded-xl bg-slate-100 p-1 gap-1 border border-slate-200">
-            <button
-              onClick={() => setPoInputMode('manual')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                poInputMode === 'manual' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <PenLine className="w-3.5 h-3.5" />
-              Manual Entry
-            </button>
-            <button
-              onClick={() => setPoInputMode('ocr')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                poInputMode === 'ocr' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Scan className="w-3.5 h-3.5" />
-              Scan Document (OCR)
-            </button>
-          </div>
-
-          {/* ── OCR Panel ── */}
-          {poInputMode === 'ocr' && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4 space-y-2">
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles className="w-4 h-4 text-blue-600" />
-                <span className="font-bold text-blue-900 text-xs">Tesseract.js OCR Scanner</span>
-                <span className="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded font-bold border border-blue-200">FREE • BROWSER-BASED</span>
+          {aiRec && (
+            <div className="p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-indigo-900 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  <span>AI Recommended Supplier: {aiRec.recommended_supplier_name}</span>
+                </div>
+                <span className="px-2 py-0.5 bg-indigo-600 text-white rounded-full text-[10px] font-bold">
+                  {aiRec.confidence}% Match
+                </span>
               </div>
-              <p className="text-[11px] text-slate-500">
-                Upload a PO document image. OCR will extract supplier name, quantity, unit price, and PO number — then auto-fill the form below.
-              </p>
-              <OcrScanPanel
-                documentLabel="purchase order document"
-                onExtracted={(r: OcrInvoiceResult) => {
-                  // Map all OCR fields → PO form
-                  if (r.quantity && r.quantity > 0) {
-                    setNewPo((prev) => ({ ...prev, quantity: r.quantity! }));
-                  }
-                  if (r.unitPrice && r.unitPrice > 0) {
-                    setNewPo((prev) => ({ ...prev, unit_price: r.unitPrice! }));
-                  } else if (r.totalAmount && r.totalAmount > 0) {
-                    const qty = r.quantity || newPo.quantity || 100;
-                    const estUnitPrice = Math.round(r.totalAmount / qty / 1.18);
-                    if (estUnitPrice > 0) {
-                      setNewPo((prev) => ({ ...prev, unit_price: estUnitPrice }));
-                    }
-                  }
-                  if (r.poNumber) {
-                    setNewPo((prev) => ({ ...prev, po_number_override: r.poNumber! }));
-                  } else if (r.invoiceNumber) {
-                    setNewPo((prev) => ({ ...prev, po_number_override: r.invoiceNumber! }));
-                  }
-                  // Match vendor name to supplier list
-                  if (r.vendorName) {
-                    const matched = suppliers.find((s: any) =>
-                      s.supplier_name.toLowerCase().includes(r.vendorName!.toLowerCase()) ||
-                      r.vendorName!.toLowerCase().includes(s.supplier_name.toLowerCase())
-                    );
-                    if (matched) setNewPo((prev) => ({ ...prev, supplier_id: matched.supplier_id }));
-                  }
-                  // Match product SKU
-                  if (r.productName) {
-                    const matchedProd = products.find((p: any) =>
-                      p.product_name.toLowerCase().includes(r.productName!.toLowerCase()) ||
-                      r.productName!.toLowerCase().includes(p.product_name.toLowerCase())
-                    );
-                    if (matchedProd) setNewPo((prev) => ({ ...prev, product_id: matchedProd.product_id }));
-                  }
-                  if (r.paymentTerms) {
-                    setNewPo((prev) => ({ ...prev, payment_terms: r.paymentTerms! }));
-                  }
-                  showSnackbar('OCR complete! Extracted PO fields auto-populated below.', 'success');
-                }}
-                onError={(msg) => showSnackbar(`OCR Error: ${msg}`, 'error')}
-              />
+              <ul className="list-disc list-inside text-[11px] text-indigo-800 space-y-0.5">
+                {aiRec.reasons.slice(0, 2).map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
             </div>
           )}
 
-          {/* ── Manual Form (always visible, auto-filled after OCR) ── */}
+          {/* Form */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>PO Reference Number</span>
-                {newPo.po_number_override && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">OCR ✓</span>}
-              </label>
+              <label className="font-semibold text-slate-700 block mb-1.5">PO Reference Number</label>
               <input
                 type="text"
                 value={newPo.po_number_override}
@@ -540,7 +555,7 @@ export const PurchaseOrders: React.FC = () => {
                   type="button"
                   onClick={handleRunAiSupplierSelect}
                   disabled={runningAiRec}
-                  className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded font-bold border border-indigo-200 flex items-center gap-1"
+                  className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded font-bold border border-indigo-200 flex items-center gap-1 cursor-pointer"
                 >
                   <Sparkles className="w-3 h-3 text-indigo-600" />
                   <span>{runningAiRec ? 'Evaluating...' : 'AI Best Supplier'}</span>
@@ -612,10 +627,7 @@ export const PurchaseOrders: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Ordered Quantity</span>
-                {newPo.quantity && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">OCR ✓</span>}
-              </label>
+              <label className="font-semibold text-slate-700 block mb-1.5">Ordered Quantity</label>
               <input
                 type="number"
                 value={newPo.quantity}
@@ -624,10 +636,7 @@ export const PurchaseOrders: React.FC = () => {
               />
             </div>
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Contract Unit Price (INR)</span>
-                {newPo.unit_price && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">OCR ✓</span>}
-              </label>
+              <label className="font-semibold text-slate-700 block mb-1.5">Contract Unit Price (INR)</label>
               <input
                 type="number"
                 value={newPo.unit_price}
