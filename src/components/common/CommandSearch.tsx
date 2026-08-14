@@ -27,13 +27,19 @@ interface CommandSearchProps {
 const ROLE_SEARCH_SCOPES: Record<UserRole, string[]> = {
   SYSTEM_ADMIN: ['purchase_orders', 'purchase_requisitions', 'shipments', 'trucks', 'invoices', 'suppliers', 'exceptions', 'quality_checks', 'audit_logs'],
   ADMIN: ['purchase_orders', 'purchase_requisitions', 'shipments', 'trucks', 'invoices', 'suppliers', 'exceptions', 'quality_checks', 'audit_logs'],
+  WORKER: ['purchase_requisitions'],
+  PROCUREMENT_OFFICER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions', 'quality_checks'],
   PROCUREMENT_MANAGER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions', 'quality_checks'],
+  LOGISTICS: ['shipments', 'trucks', 'purchase_orders'],
   LOGISTICS_MANAGER: ['shipments', 'trucks', 'purchase_orders'],
-  WAREHOUSE_MANAGER: ['shipments', 'trucks', 'purchase_orders', 'quality_checks'],
+  GATE_POST_OFFICER: ['shipments', 'trucks'],
   GATE_OPERATOR: ['shipments', 'trucks'],
+  RECEIVING_QC: ['shipments', 'purchase_orders', 'quality_checks'],
   RECEIVING_QC_OPERATOR: ['shipments', 'purchase_orders', 'quality_checks'],
   RECEIVING_OPERATOR: ['shipments', 'purchase_orders', 'quality_checks'],
+  FINANCE: ['invoices', 'exceptions', 'purchase_orders'],
   FINANCE_MANAGER: ['invoices', 'exceptions', 'purchase_orders'],
+  WAREHOUSE_MANAGER: ['shipments', 'trucks', 'purchase_orders', 'quality_checks'],
   SUPPLIER: ['purchase_orders', 'shipments', 'invoices', 'quality_checks'],
   TRUCK_DRIVER: ['shipments', 'trucks'],
 };
@@ -51,43 +57,67 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
     { label: 'Quality Control (QC)', path: '/quality', color: 'text-indigo-600' },
     { label: 'Exceptions Hub', path: '/exceptions', color: 'text-rose-600' },
   ],
+  WORKER: [
+    { label: 'AI NLP Requisition', path: '/purchase-requisitions', color: 'text-indigo-600' },
+    { label: 'My Requisitions', path: '/purchase-requisitions', color: 'text-amber-600' },
+    { label: 'System Alerts', path: '/alerts', color: 'text-rose-600' },
+  ],
+  PROCUREMENT_OFFICER: [
+    { label: 'Purchase Requisitions', path: '/purchase-requisitions', color: 'text-amber-600' },
+    { label: 'Purchase Orders', path: '/purchase-orders', color: 'text-blue-600' },
+    { label: 'Suppliers Directory', path: '/suppliers', color: 'text-emerald-600' },
+    { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
+  ],
   PROCUREMENT_MANAGER: [
     { label: 'Purchase Requisitions', path: '/purchase-requisitions', color: 'text-amber-600' },
     { label: 'Purchase Orders', path: '/purchase-orders', color: 'text-blue-600' },
     { label: 'Suppliers Directory', path: '/suppliers', color: 'text-emerald-600' },
-    { label: 'Supplier Quality', path: '/quality', color: 'text-indigo-600' },
   ],
-  LOGISTICS_MANAGER: [
+  LOGISTICS: [
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
     { label: 'Fleet & Telematics', path: '/trucks', color: 'text-indigo-600' },
     { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
   ],
-  WAREHOUSE_MANAGER: [
+  LOGISTICS_MANAGER: [
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
-    { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
-    { label: 'Quality Inspection', path: '/quality', color: 'text-indigo-600' },
-    { label: 'Goods Receipts', path: '/grn', color: 'text-purple-600' },
+    { label: 'Fleet & Telematics', path: '/trucks', color: 'text-indigo-600' },
+  ],
+  GATE_POST_OFFICER: [
+    { label: 'Gate & Yard Docks', path: '/yard', color: 'text-emerald-600' },
+    { label: 'Live Operational Map', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Fleet Registry', path: '/trucks', color: 'text-indigo-600' },
   ],
   GATE_OPERATOR: [
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
     { label: 'Yard & Gate Queue', path: '/yard', color: 'text-emerald-600' },
-    { label: 'Fleet Trucks', path: '/trucks', color: 'text-indigo-600' },
+  ],
+  RECEIVING_QC: [
+    { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
+    { label: '5-Pillar Quality Check', path: '/quality', color: 'text-indigo-600' },
+    { label: 'Dock Unloading Bays', path: '/yard', color: 'text-emerald-600' },
   ],
   RECEIVING_QC_OPERATOR: [
     { label: 'Quality Check (QC)', path: '/quality', color: 'text-indigo-600' },
     { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
-    { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
   ],
   RECEIVING_OPERATOR: [
     { label: 'Quality Check (QC)', path: '/quality', color: 'text-indigo-600' },
     { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
-    { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
+  ],
+  FINANCE: [
+    { label: 'Invoices & AI OCR', path: '/invoices', color: 'text-blue-600' },
+    { label: '3-Way Match & Exceptions', path: '/exceptions', color: 'text-rose-600' },
+    { label: 'Payments Settlement', path: '/payments', color: 'text-emerald-600' },
+    { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
   ],
   FINANCE_MANAGER: [
     { label: 'Invoices & OCR', path: '/invoices', color: 'text-blue-600' },
     { label: 'Exceptions Hub', path: '/exceptions', color: 'text-rose-600' },
     { label: 'Payments Queue', path: '/payments', color: 'text-emerald-600' },
-    { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
+  ],
+  WAREHOUSE_MANAGER: [
+    { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Dock & Yard Bays', path: '/yard', color: 'text-emerald-600' },
   ],
   SUPPLIER: [
     { label: 'Supplier Portal', path: '/supplier', color: 'text-indigo-600' },

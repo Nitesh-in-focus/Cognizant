@@ -152,16 +152,20 @@ export const SupplierPortal: React.FC = () => {
     }
   };
 
-  // Supplier Actions on PO: Accept, Request Clarification, Reject
+  // Supplier Actions on PO: Accept, Request Clarification, Reject (Section 16 of updates3.md)
   const handleUpdatePoStatus = async (
     po: PurchaseOrder,
-    newStatus: 'CONFIRMED' | 'CHANGE_REQUESTED' | 'CANCELLED',
+    newStatus: 'CONFIRMED' | 'CHANGE_REQUESTED' | 'SUPPLIER_REJECTED',
     reason?: string
   ) => {
     try {
       const { error } = await supabase
         .from('purchase_orders')
-        .update({ status: newStatus })
+        .update({
+          status: newStatus,
+          supplier_response_reason: reason || null,
+          supplier_response_at: new Date().toISOString(),
+        })
         .eq('po_id', po.po_id);
 
       if (error) throw error;
@@ -173,12 +177,12 @@ export const SupplierPortal: React.FC = () => {
         { reason, supplier_id: targetSupplierId }
       );
 
-      if (newStatus === 'CHANGE_REQUESTED') {
+      if (newStatus === 'CHANGE_REQUESTED' || newStatus === 'SUPPLIER_REJECTED') {
         await sendEmailNotification({
           alert_type: 'PO_APPROVAL',
-          severity: 'HIGH',
-          title: `PO Clarification Requested: ${po.po_number}`,
-          message: `Supplier ${supplier?.supplier_name || 'Vendor'} requested change: "${reason}"`,
+          severity: newStatus === 'SUPPLIER_REJECTED' ? 'CRITICAL' : 'HIGH',
+          title: `Supplier ${newStatus === 'SUPPLIER_REJECTED' ? 'Rejected' : 'Requested Clarification on'} PO #${po.po_number}`,
+          message: `Supplier ${supplier?.supplier_name || 'Vendor'} responded: "${reason || 'No specific reason provided'}"`,
           entity_type: 'purchase_orders',
           entity_number: po.po_number,
           supplier_name: supplier?.supplier_name,
@@ -191,8 +195,8 @@ export const SupplierPortal: React.FC = () => {
         newStatus === 'CONFIRMED'
           ? `PO #${po.po_number} successfully accepted!`
           : newStatus === 'CHANGE_REQUESTED'
-          ? `Clarification request sent to Procurement Manager.`
-          : `PO #${po.po_number} rejected.`,
+          ? `Clarification request sent to Procurement Officer.`
+          : `PO #${po.po_number} rejected. Reason logged for Procurement Officer.`,
         newStatus === 'CONFIRMED' ? 'success' : 'info'
       );
 
@@ -203,22 +207,26 @@ export const SupplierPortal: React.FC = () => {
     }
   };
 
-  // Create Shipment from Supplier Portal
+  // Create Shipment from Supplier Portal (Section 18 & 19 of updates3.md)
   const handleCreateShipment = async () => {
     try {
       const suffix = Math.floor(1000 + Math.random() * 9000);
       const shipmentNumber = `SHP-2026-${suffix}`;
+      const asnNumber = `ASN-2026-${suffix}`;
 
       const { data: shp, error } = await supabase
         .from('shipments')
         .insert([
           {
             shipment_number: shipmentNumber,
+            asn_number: asnNumber,
             po_id: newShipment.po_id,
             origin: `${supplier?.city || 'Mumbai'} Facility`,
             dispatch_date: new Date(newShipment.dispatch_date).toISOString(),
             expected_arrival: new Date(newShipment.expected_arrival).toISOString(),
             status: 'DISPATCHED',
+            driver_status: 'PENDING',
+            location_source: 'DECLARED_BY_SUPPLIER',
             total_quantity: newShipment.total_quantity,
           },
         ])
@@ -236,16 +244,18 @@ export const SupplierPortal: React.FC = () => {
           carrier_name: newShipment.carrier_name,
           truck_type: 'Heavy 10-Ton Container',
           capacity: newShipment.total_quantity,
+          driver_status: 'PENDING',
           status: 'IN_TRANSIT',
         },
       ]);
 
       await logAuditAction('SUPPLIER_SHIPMENT_CREATED', 'shipments', shp.shipment_id, {
         vehicle_number: newShipment.vehicle_number,
+        asn_number: asnNumber,
         po_id: newShipment.po_id,
       });
 
-      showToast(`Shipment #${shipmentNumber} dispatched with truck ${newShipment.vehicle_number}!`, 'success');
+      showToast(`Shipment #${shipmentNumber} (ASN: ${asnNumber}) dispatched! Driver assignment request sent.`, 'success');
       setOpenShipmentModal(false);
       fetchSupplierData();
     } catch (err: any) {

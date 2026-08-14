@@ -428,6 +428,58 @@ export const QualityCheckPage: React.FC = () => {
           <p className="text-xs text-slate-500 mt-1">Requiring debit note or hold</p>
         </div>
       </div>
+      {/* Tabs Navigation (Section 28 & 33 of updates3.md) */}
+      <div className="flex border-b border-slate-200 space-x-1 text-xs font-bold text-slate-600">
+        <button
+          onClick={() => setStatusFilter('ALL')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+            statusFilter === 'ALL' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>All Quality Checks</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-[10px]">{qualityChecks.length}</span>
+        </button>
+
+        <button
+          onClick={() => setStatusFilter('PASSED')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+            statusFilter === 'PASSED' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Passed Compliance</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 text-[10px]">
+            {qualityChecks.filter((q) => q.status === 'PASSED' || q.status === 'FINALIZED').length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setStatusFilter('PASSED_WITH_ISSUES')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+            statusFilter === 'PASSED_WITH_ISSUES' ? 'border-amber-600 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+          <span>Passed with Issues</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-amber-50 text-amber-700 text-[10px]">
+            {qualityChecks.filter((q) => q.status === 'PASSED_WITH_ISSUES').length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setStatusFilter('FAILED')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+            statusFilter === 'FAILED' ? 'border-rose-600 text-rose-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <XCircle className="w-3.5 h-3.5 text-rose-600" />
+          <span>Failed Quality Checks</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-rose-50 text-rose-700 text-[10px]">
+            {qualityChecks.filter((q) => q.status === 'FAILED').length}
+          </span>
+        </button>
+      </div>
 
       {/* Filter & Search Bar */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">

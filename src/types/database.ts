@@ -39,8 +39,13 @@ export interface PurchaseRequisition {
   pr_number: string;
   warehouse_id: string;
   priority: 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW';
-  status: 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CONVERTED';
+  status: 'DRAFT' | 'PENDING_APPROVAL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CONVERTED';
   reason: string;
+  natural_language_prompt?: string;
+  created_by_worker?: string;
+  rejection_reason?: string;
+  rejected_by?: string;
+  rejected_at?: string;
   request_date?: string;
   required_date?: string;
   approved_at?: string;
@@ -65,16 +70,26 @@ export interface PurchaseOrder {
   warehouse_id: string;
   status:
     | 'DRAFT'
+    | 'DRAFT_AI_GENERATED'
     | 'DRAFT_AUTO_GENERATED'
     | 'READY_TO_SEND'
+    | 'APPROVED'
+    | 'REJECTED'
     | 'SENT_TO_SUPPLIER'
     | 'CONFIRMED'
+    | 'SUPPLIER_REJECTED'
+    | 'CLARIFICATION_REQUESTED'
     | 'CHANGE_REQUESTED'
     | 'DISPATCHED'
     | 'IN_TRANSIT'
     | 'RECEIVED'
     | 'CLOSED'
     | 'CANCELLED';
+  rejection_reason?: string;
+  rejected_by?: string;
+  rejected_at?: string;
+  supplier_response_reason?: string;
+  supplier_response_at?: string;
   subtotal?: number;
   tax_amount?: number;
   total_amount: number;
@@ -113,6 +128,9 @@ export interface Shipment {
   location_source?: 'GPS_TELEMATICS' | 'DECLARED_BY_SUPPLIER' | 'SIMULATED';
   driver_id?: string;
   driver_status?: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  driver_rejection_reason?: string;
+  distance_travelled_km?: number;
+  distance_remaining_km?: number;
   parking_slot?: string;
   priority?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   status: 'PLANNED' | 'SCHEDULED' | 'DISPATCHED' | 'IN_TRANSIT' | 'ARRIVED_AT_FACILITY' | 'AT_GATE' | 'IN_YARD' | 'AT_DOCK' | 'UNLOADING' | 'UNLOADED' | 'RECEIVED' | 'ARRIVED' | 'DELIVERED';
@@ -411,4 +429,16 @@ export interface AuditLog {
   is_emergency_override?: boolean;
   metadata?: any;
   created_at?: string;
+}
+
+export interface StatusHistory {
+  history_id: string;
+  entity_type: string;
+  entity_id: string;
+  old_status?: string;
+  new_status: string;
+  changed_by?: string;
+  reason?: string;
+  timestamp: string;
+  metadata?: any;
 }

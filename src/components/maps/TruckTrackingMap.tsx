@@ -89,7 +89,7 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
   className = '',
   compact = false,
 }) => {
-  const { showSnackbar, addAlert } = useApp();
+  const { showSnackbar, addAlert, canEditLocation } = useApp();
 
   // Determine corridor dynamically from shipment data
   const getCorridorWaypoints = (): Waypoint[] => {
@@ -303,54 +303,61 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
           </div>
         </div>
 
-        {/* Playback Simulation Toolbar */}
-        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1 shadow-2xs">
-          <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-colors ${
-              isPlaying
-                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-            title={isPlaying ? 'Pause Simulation' : 'Play Simulation'}
-          >
-            {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
-            <span>{isPlaying ? 'Pause' : 'Simulate GPS'}</span>
-          </button>
+        {/* Playback & Manual Override Toolbar (Section 22 of updates3.md) */}
+        {canEditLocation() ? (
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1 shadow-2xs">
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-colors ${
+                isPlaying
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+              title={isPlaying ? 'Pause Simulation' : 'Play Simulation'}
+            >
+              {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+              <span>{isPlaying ? 'Pause' : 'Gate GPS Override'}</span>
+            </button>
 
-          <button
-            onClick={handleStepForward}
-            className="p-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-semibold px-2 transition-colors"
-            title="Step Next Waypoint"
-          >
-            Step +1
-          </button>
+            <button
+              onClick={handleStepForward}
+              className="p-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-semibold px-2 transition-colors cursor-pointer"
+              title="Step Next Waypoint"
+            >
+              Step +1
+            </button>
 
-          <button
-            onClick={handleReset}
-            className="p-1.5 rounded hover:bg-slate-100 text-slate-500 transition-colors"
-            title="Reset to Start"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
+            <button
+              onClick={handleReset}
+              className="p-1.5 rounded hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
+              title="Reset to Start"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
 
-          <div className="h-4 w-px bg-slate-200 mx-1" />
+            <div className="h-4 w-px bg-slate-200 mx-1" />
 
-          {/* Speed Selector */}
-          <div className="flex items-center text-[10px] font-bold">
-            {([1, 2, 5] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setPlaySpeed(s)}
-                className={`px-1.5 py-0.5 rounded transition-colors ${
-                  playSpeed === s ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                {s}x
-              </button>
-            ))}
+            {/* Speed Selector */}
+            <div className="flex items-center text-[10px] font-bold">
+              {([1, 2, 5] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setPlaySpeed(s)}
+                  className={`px-1.5 py-0.5 rounded transition-colors ${
+                    playSpeed === s ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold">
+            <Radio className="w-3.5 h-3.5 text-cyan-600 animate-pulse" />
+            <span>Trusted Telematics (View-Only)</span>
+          </div>
+        )}
       </div>
 
       {/* Map Display Container */}

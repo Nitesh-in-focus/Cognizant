@@ -267,6 +267,37 @@ export const DriverPortal: React.FC = () => {
             </div>
           </div>
 
+          {/* Quick Metrics Bar (Section 20 of updates3.md) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 my-2 border-b border-slate-100">
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Distance Travelled</span>
+              <strong className="text-base font-extrabold text-slate-900">
+                {activeShipment.distance_travelled_km || 126} km
+              </strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Distance Remaining</span>
+              <strong className="text-base font-extrabold text-blue-600">
+                {activeShipment.distance_remaining_km || 84} km
+              </strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Expected Arrival (ETA)</span>
+              <strong className="text-base font-extrabold text-slate-900">
+                {activeShipment.expected_arrival ? new Date(activeShipment.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '3:40 PM'}
+              </strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200">
+              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Assigned Dock / Yard</span>
+              <strong className="text-base font-extrabold text-indigo-950">
+                {activeShipment.parking_slot ? `Slot ${activeShipment.parking_slot}` : 'Dock Bay #04'}
+              </strong>
+            </div>
+          </div>
+
           {/* Trip Details Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-5">
             {/* Route */}

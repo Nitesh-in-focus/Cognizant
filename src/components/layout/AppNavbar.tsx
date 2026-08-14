@@ -62,15 +62,21 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
   const roleLabels: Record<UserRole, { label: string; badge: string }> = {
     SYSTEM_ADMIN: { label: 'System Administration', badge: 'Sys Admin' },
     ADMIN: { label: 'Executive Operations', badge: 'Admin' },
+    WORKER: { label: 'Shop Floor & Assembly', badge: 'Worker' },
+    PROCUREMENT_OFFICER: { label: 'Strategic Sourcing', badge: 'Procurement' },
     PROCUREMENT_MANAGER: { label: 'Strategic Sourcing', badge: 'Procurement' },
-    LOGISTICS_MANAGER: { label: 'Inbound Logistics', badge: 'Logistics' },
-    WAREHOUSE_MANAGER: { label: 'Distribution Hub', badge: 'Warehouse' },
-    GATE_OPERATOR: { label: 'Gate Security', badge: 'Gate Post' },
-    RECEIVING_QC_OPERATOR: { label: 'Receiving & QC Lead', badge: 'QC Lead' },
-    RECEIVING_OPERATOR: { label: 'Dock QA Inspector', badge: 'Receiving' },
-    FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
     SUPPLIER: { label: 'Tata Industrial Solutions', badge: 'Supplier' },
     TRUCK_DRIVER: { label: 'Carrier Fleet Driver', badge: 'Driver' },
+    LOGISTICS: { label: 'Inbound Logistics', badge: 'Logistics' },
+    LOGISTICS_MANAGER: { label: 'Inbound Logistics', badge: 'Logistics' },
+    GATE_POST_OFFICER: { label: 'Gate Security & Yard', badge: 'Gate Post' },
+    GATE_OPERATOR: { label: 'Gate Security & Yard', badge: 'Gate Post' },
+    RECEIVING_QC: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
+    RECEIVING_QC_OPERATOR: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
+    RECEIVING_OPERATOR: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
+    FINANCE: { label: 'Financial Controller', badge: 'Finance' },
+    FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
+    WAREHOUSE_MANAGER: { label: 'Distribution Hub', badge: 'Warehouse' },
   };
 
   const handleLogout = () => {

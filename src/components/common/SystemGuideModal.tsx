@@ -40,22 +40,24 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
 
   if (!isOpen) return null;
 
-  const roleConfigs: Record<
-    UserRole,
-    {
-      roleTitle: string;
-      roleBadge: string;
-      department: string;
-      icon: any;
-      headerColor: string;
-      accentColor: string;
-      tagline: string;
-      workflowSteps: { step: number; title: string; desc: string; actionText: string; actionPath: string }[];
-      authorizedData: { title: string; desc: string; accessLevel: 'FULL_CONTROL' | 'APPROVE_ONLY' | 'READ_WRITE' | 'READ_ONLY' }[];
-      pipelineStageIndex: number; // 0 to 6
-      pipelineNotes: string;
-      proTips: string[];
-    }
+  const roleConfigs: Partial<
+    Record<
+      UserRole,
+      {
+        roleTitle: string;
+        roleBadge: string;
+        department: string;
+        icon: any;
+        headerColor: string;
+        accentColor: string;
+        tagline: string;
+        workflowSteps: { step: number; title: string; desc: string; actionText: string; actionPath: string }[];
+        authorizedData: { title: string; desc: string; accessLevel: 'FULL_CONTROL' | 'APPROVE_ONLY' | 'READ_WRITE' | 'READ_ONLY' }[];
+        pipelineStageIndex: number; // 0 to 6
+        pipelineNotes: string;
+        proTips: string[];
+      }
+    >
   > = {
     SYSTEM_ADMIN: {
       roleTitle: 'System Security & Administration Lead',
@@ -109,41 +111,63 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         },
         {
           step: 2,
-          title: 'Trace 6-Stage End-to-End Audit Chains',
+          title: 'Trace 15-Stage End-to-End Audit Chains',
           desc: 'Verify continuous relational integrity across Demand Requisitions, PO Contracts, GPS Logistics, GRN QA, Invoices, and Payments.',
           actionText: 'Open Traceability Matrix',
           actionPath: '/traceability',
         },
+      ],
+      authorizedData: [
+        { title: 'Global Database Tables', desc: 'Full Read & Write access across all Supabase operational tables.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 0,
+      pipelineNotes: 'Full system administration authority.',
+      proTips: ['Use the top Quick Persona Switcher to test each persona flow.'],
+    },
+    WORKER: {
+      roleTitle: 'Shop Floor Operations Worker',
+      roleBadge: 'Worker',
+      department: 'Shop Floor & Assembly Operations',
+      icon: Sparkles,
+      headerColor: 'from-indigo-950 via-slate-900 to-indigo-950',
+      accentColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30',
+      tagline: 'Create natural-language Purchase Requisitions with Gemini AI NLP extraction and monitor approval status.',
+      workflowSteps: [
         {
-          step: 3,
-          title: 'Run Disruption Simulation Scenarios',
-          desc: 'Trigger highway delays, supplier price variances, or yard congestions to test automated contingency handling.',
-          actionText: 'Launch Scenarios',
-          actionPath: '/',
+          step: 1,
+          title: 'Draft PR with Natural Language NLP',
+          desc: 'Speak or type your requirement in plain English. Gemini extracts product, quantity, priority, and date.',
+          actionText: 'Create PR (NLP)',
+          actionPath: '/purchase-requisitions',
         },
         {
-          step: 4,
-          title: 'Analyze Executive Spend & Power BI Telemetry',
-          desc: 'Inspect category spend distributions, vendor scorecards, and payment cycle trends.',
-          actionText: 'View Analytics',
-          actionPath: '/analytics',
+          step: 2,
+          title: 'Review Structured PR Parameters',
+          desc: 'Verify product SKU, delivery facility, and quantity before final confirmation and submission.',
+          actionText: 'My Requisitions',
+          actionPath: '/purchase-requisitions',
+        },
+        {
+          step: 3,
+          title: 'Track Procurement Decision & Rejection Reasons',
+          desc: 'View approved requisitions or inspect specific rejection feedback provided by Procurement.',
+          actionText: 'View Requisitions',
+          actionPath: '/purchase-requisitions',
         },
       ],
       authorizedData: [
-        { title: 'Global Database Tables', desc: 'Full Read & Write access across all 20 Supabase operational tables.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Executive Financial Telemetry', desc: 'Cashflow forecasts, Power BI reports, and 3-way match audit trails.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Master Entity Configurations', desc: 'Manage warehouses, yard bays, supplier catalogs, and user permissions.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Purchase Requisitions (PRs)', desc: 'Create, edit drafts, and view personal requisition history.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Product SKU Master', desc: 'Browse authorized component catalog and unit of measures.', accessLevel: 'READ_ONLY' },
       ],
       pipelineStageIndex: 0,
-      pipelineNotes: 'You possess full end-to-end visibility across all 7 stages of the autonomous supply chain lifecycle.',
+      pipelineNotes: 'Your role triggers Stage 1 (Demand Requisition) using AI-first natural language processing.',
       proTips: [
-        'Use ⌘K or Ctrl+K anywhere to execute instant command search across all records.',
-        'Use the Demo Scenarios button in the top navbar to inject real-time operational events.',
+        'Use voice or descriptive prompts like "Need 500 safety gloves for Pune DC by next Friday" for instant extraction.',
       ],
     },
-    PROCUREMENT_MANAGER: {
+    PROCUREMENT_OFFICER: {
       roleTitle: 'Strategic Sourcing & Procurement Lead',
-      roleBadge: 'Procurement Lead',
+      roleBadge: 'Procurement Officer',
       department: 'Strategic Sourcing & Purchasing',
       icon: ShoppingCart,
       headerColor: 'from-amber-950 via-slate-900 to-amber-950',
@@ -152,311 +176,43 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
       workflowSteps: [
         {
           step: 1,
-          title: 'Review Pending Purchase Requisitions (PRs)',
-          desc: 'Inspect departmental material requests, required delivery dates, and priority scores.',
+          title: 'Review & Approve/Reject Purchase Requisitions',
+          desc: 'Inspect worker demands, approve to trigger AI supplier selection, or reject with mandatory reasons.',
           actionText: 'Review Requisitions',
           actionPath: '/purchase-requisitions',
         },
         {
           step: 2,
-          title: 'Generate & Issue Purchase Orders (POs)',
-          desc: 'Create contractual POs with approved vendor rates, delivery deadlines, and automatic 18% GST tax breakdown.',
-          actionText: 'Create Purchase Order',
+          title: 'Review AI Auto-Drafted Purchase Orders (POs)',
+          desc: 'Review auto-drafted POs generated by Gemini multi-criteria supplier evaluation.',
+          actionText: 'Review Draft POs',
           actionPath: '/purchase-orders',
         },
         {
           step: 3,
-          title: 'Audit Supplier SLA Scorecards',
-          desc: 'Monitor vendor fulfillment rates, lead times, quality grades, and contract rate adherence.',
-          actionText: 'Suppliers Directory',
-          actionPath: '/suppliers',
+          title: 'Manually Transmit PO to Supplier (Send to Supplier)',
+          desc: 'Click "SEND TO SUPPLIER" to officially dispatch contractual commitment to the vendor.',
+          actionText: 'Purchase Orders Register',
+          actionPath: '/purchase-orders',
         },
         {
           step: 4,
-          title: 'Resolve Price Mismatch Exceptions',
-          desc: 'Investigate price discrepancies flagged by Finance during 3-way match invoice comparison.',
-          actionText: 'Exceptions Workspace',
-          actionPath: '/exceptions',
+          title: 'Monitor Supplier Responses & Full Traceability',
+          desc: 'Track supplier PO confirmations, rejections, and review the end-to-end 15-stage audit matrix.',
+          actionText: 'Traceability Matrix',
+          actionPath: '/traceability',
         },
       ],
       authorizedData: [
-        { title: 'Purchase Requisitions (PRs)', desc: 'View, approve, and convert departmental demands into POs.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Purchase Orders (POs)', desc: 'Create, issue, edit, and dispatch contractual purchase orders.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Purchase Requisitions (PRs)', desc: 'Approve, reject, and inspect worker demand histories.', accessLevel: 'APPROVE_ONLY' },
+        { title: 'Purchase Orders (POs)', desc: 'Review, edit, approve, reject, and transmit contractual POs.', accessLevel: 'FULL_CONTROL' },
         { title: 'Suppliers Directory', desc: 'Manage vendor partner profiles, contract terms, and SLA scorecards.', accessLevel: 'READ_WRITE' },
-        { title: 'Product SKU Catalog', desc: 'Inspect product master data, unit prices, and category classifications.', accessLevel: 'READ_ONLY' },
+        { title: 'Traceability Matrix', desc: 'Full view of all operational stages from PR to Payment settlement.', accessLevel: 'READ_ONLY' },
       ],
       pipelineStageIndex: 1,
       pipelineNotes: 'Your role governs Stage 1 (Requisitions) and Stage 2 (Purchase Orders), initiating the supply chain pipeline.',
       proTips: [
-        'Click "+ Create Purchase Order" to quickly issue new POs directly synced with live Supabase database.',
-        'Check the Suppliers Directory to evaluate vendors with Grade A+ performance records before ordering.',
-      ],
-    },
-    WAREHOUSE_MANAGER: {
-      roleTitle: 'Distribution Center & Logistics Lead',
-      roleBadge: 'Warehouse Manager',
-      department: 'Pune Central Distribution Hub',
-      icon: Boxes,
-      headerColor: 'from-indigo-950 via-slate-900 to-indigo-950',
-      accentColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30',
-      tagline: 'Track approaching carrier GPS telematics, schedule DC dock unloading bays, and manage yard dwell times.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Monitor Inbound Highway GPS Telematics',
-          desc: 'Track approaching carrier trucks on Google Maps, check speed and cargo cold-chain temperature (21°C).',
-          actionText: 'Live Shipments Map',
-          actionPath: '/shipments',
-        },
-        {
-          step: 2,
-          title: 'Schedule & Allocate Dock Bays (D01-D06)',
-          desc: 'Assign arriving freight vehicles to available dock bays based on pallet volume and unloading priority.',
-          actionText: 'Dock Bays Matrix',
-          actionPath: '/yard',
-        },
-        {
-          step: 3,
-          title: 'Supervise Staging Yard & Dwell Times',
-          desc: 'Maintain queue flow, ensure turnaround dwell times stay under 25 minutes, and monitor gate verified trucks.',
-          actionText: 'Yard Staging Queue',
-          actionPath: '/yard',
-        },
-        {
-          step: 4,
-          title: 'Oversee Goods Receipts & QA Intake',
-          desc: 'Verify incoming consignment pallet counts and ensure Goods Receipt Notes (GRN) are accurately logged.',
-          actionText: 'Receiving & GRN',
-          actionPath: '/grn',
-        },
-      ],
-      authorizedData: [
-        { title: 'Live Inbound Shipments & GPS', desc: 'Real-time Google Maps telemetry, waypoints, and ETA calculations.', accessLevel: 'READ_WRITE' },
-        { title: 'Dock Bays & Yard Management', desc: 'Full control over dock bay scheduling, yard queue, and truck assignments.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Fleet & Carrier Directory', desc: 'Carrier telematics, driver contacts, and vehicle container specifications.', accessLevel: 'READ_WRITE' },
-      ],
-      pipelineStageIndex: 3,
-      pipelineNotes: 'Your role governs Stage 3 (Highway GPS Logistics) and Stage 4 (Yard & Dock Allocations).',
-      proTips: [
-        'Click on any shipment in the Live Shipments directory to open the 5-tab Carrier Manifest & GPS inspector.',
-        'Use the Step +1 or Simulate GPS buttons on the map to test real-time waypoint progression.',
-      ],
-    },
-    GATE_OPERATOR: {
-      roleTitle: 'Inbound Gate Security Officer',
-      roleBadge: 'Gate Security',
-      department: 'Facility Gate Post & Security',
-      icon: Radio,
-      headerColor: 'from-teal-950 via-slate-900 to-teal-950',
-      accentColor: 'text-teal-400 bg-teal-500/10 border-teal-500/30',
-      tagline: 'Validate arriving commercial freight vehicles, inspect driver credentials, and admit trucks to the staging yard.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Scan Inbound Vehicle License Plate',
-          desc: 'Verify the approaching carrier truck registration plate against the active Purchase Order.',
-          actionText: 'Gate Check-In Form',
-          actionPath: '/',
-        },
-        {
-          step: 2,
-          title: 'Validate E-Way Bill & Tare Weighbridge',
-          desc: 'Ensure GST compliance and check-in tare weighbridge weight certificate before gate admittance.',
-          actionText: 'Verify Compliance',
-          actionPath: '/shipments',
-        },
-        {
-          step: 3,
-          title: 'Admit Truck to Facility Staging Yard',
-          desc: 'Timestamp the gate entry and transition vehicle status to WAITING in the yard queue.',
-          actionText: 'Admit to Yard',
-          actionPath: '/yard',
-        },
-        {
-          step: 4,
-          title: 'Monitor Gate Dwell & Queuing Flow',
-          desc: 'Ensure checkpost dwell time stays below 15 minutes to prevent perimeter road congestion.',
-          actionText: 'View Gate Queue',
-          actionPath: '/yard',
-        },
-      ],
-      authorizedData: [
-        { title: 'Gate In/Out Registry', desc: 'Log vehicle check-in, driver credentials, and gate verification timestamps.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Yard Staging Queue', desc: 'Admit vehicles and update gate-verified status in the staging yard.', accessLevel: 'READ_WRITE' },
-        { title: 'Live Inbound Shipments', desc: 'Inspect approaching vehicle plates and linked PO numbers.', accessLevel: 'READ_ONLY' },
-      ],
-      pipelineStageIndex: 3,
-      pipelineNotes: 'Your role operates at the gateway of Stage 4 (Yard & Gate Check-in), ensuring physical perimeter security.',
-      proTips: [
-        'Use the Quick Gate Check-In form right on your dashboard to admit trucks to the yard in 1-click.',
-        'Check the waiting minutes timer in the queue table to prioritize vehicles waiting the longest.',
-      ],
-    },
-    RECEIVING_OPERATOR: {
-      roleTitle: 'Dock QA & Receiving Inspector',
-      roleBadge: 'Dock QA Inspector',
-      department: 'Dock Intake & Quality Assurance',
-      icon: ClipboardCheck,
-      headerColor: 'from-purple-950 via-slate-900 to-purple-950',
-      accentColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
-      tagline: 'Inspect unloaded container pallets, verify physical counts against PO specs, and log Goods Receipt Notes.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Inspect Unloaded Container Pallets',
-          desc: 'Verify physical cargo items at assigned dock bays (D01-D06) against packaging specifications.',
-          actionText: 'Active Dock Bays',
-          actionPath: '/yard',
-        },
-        {
-          step: 2,
-          title: 'Count Accepted vs Damaged Units',
-          desc: 'Perform precise physical count verification, identifying any transit damage or carton tears.',
-          actionText: 'Inspect Cargo',
-          actionPath: '/grn',
-        },
-        {
-          step: 3,
-          title: 'Generate Goods Receipt Note (GRN)',
-          desc: 'Submit the verified count into the Supabase database with inspection sign-off notes.',
-          actionText: 'Log GRN Intake',
-          actionPath: '/grn',
-        },
-        {
-          step: 4,
-          title: 'Trigger Automated 3-Way Match Verification',
-          desc: 'Logging the GRN automatically feeds accepted quantities into Finance for 3-way reconciliation.',
-          actionText: 'View GRN History',
-          actionPath: '/grn',
-        },
-      ],
-      authorizedData: [
-        { title: 'Goods Receipt Notes (GRN)', desc: 'Create, inspect, sign-off, and manage goods receipt records.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Dock Bay Unloading Status', desc: 'Inspect container unloading and update bay completion status.', accessLevel: 'READ_WRITE' },
-        { title: 'Product SKU Specs', desc: 'View product specifications, unit of measure, and packaging standards.', accessLevel: 'READ_ONLY' },
-      ],
-      pipelineStageIndex: 4,
-      pipelineNotes: 'Your role governs Stage 5 (QA Intake & GRN), bridging physical warehouse receiving with financial matching.',
-      proTips: [
-        'Use the Quick GRN Terminal on your dashboard to auto-calculate Net Accepted Units (Received minus Damaged).',
-        'Any damaged count automatically flags a quantity exception in Finance, preventing overpayment.',
-      ],
-    },
-    FINANCE_MANAGER: {
-      roleTitle: 'Financial Controller & Accounts Payable Lead',
-      roleBadge: 'Financial Controller',
-      department: 'Finance & Accounts Payable',
-      icon: Receipt,
-      headerColor: 'from-emerald-950 via-slate-900 to-emerald-950',
-      accentColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
-      tagline: 'Control invoice OCR extraction, autonomous 3-way match verification, variance resolution, and NEFT payments.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Ingest & Review Invoices via AI OCR',
-          desc: 'Review vendor invoice data extracted with 100% confidence, including subtotal, 18% GST, and line totals.',
-          actionText: 'Invoices & OCR',
-          actionPath: '/invoices',
-        },
-        {
-          step: 2,
-          title: 'Execute Autonomous 3-Way Match Matrix',
-          desc: 'Verify mathematical match: Purchase Order Rate = Invoice Rate AND GRN Accepted Qty = Invoiced Qty.',
-          actionText: 'Verify 3-Way Match',
-          actionPath: '/invoices',
-        },
-        {
-          step: 3,
-          title: 'Investigate & Resolve Exceptions',
-          desc: 'Investigate price variance or quantity mismatch alerts, and issue debit notes in 1-click.',
-          actionText: 'Exceptions Workspace',
-          actionPath: '/exceptions',
-        },
-        {
-          step: 4,
-          title: 'Authorize NEFT / RTGS Payment Settlement',
-          desc: 'Disburse scheduled payouts to verified suppliers with bank transaction reference generation.',
-          actionText: 'Disburse Payments',
-          actionPath: '/payments',
-        },
-      ],
-      authorizedData: [
-        { title: 'Invoices & AI OCR Extraction', desc: 'Full control over vendor invoices, document scans, and OCR records.', accessLevel: 'FULL_CONTROL' },
-        { title: '3-Way Match Exceptions', desc: 'Investigate variances, approve rate tolerances, and issue debit adjustments.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Payments Settlement Queue', desc: 'Authorize NEFT disbursements and manage banking transaction references.', accessLevel: 'FULL_CONTROL' },
-      ],
-      pipelineStageIndex: 5,
-      pipelineNotes: 'Your role governs Stage 6 (Invoice & 3-Way Match) and Stage 7 (Final Payment Settlement).',
-      proTips: [
-        'In the Exceptions Hub (/exceptions), click "1-Click Resolve" on any price variance to auto-adjust rates and lift payment holds.',
-      ],
-    },
-    LOGISTICS_MANAGER: {
-      roleTitle: 'Inbound Logistics & Telematics Lead',
-      roleBadge: 'Logistics Lead',
-      department: 'Inbound Logistics',
-      icon: Truck,
-      headerColor: 'from-sky-950 via-slate-900 to-sky-950',
-      accentColor: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
-      tagline: 'Track fleet telemetry, manage GPS corridors, and leverage AI ETA predictions to prevent supply bottlenecks.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Monitor Live Inbound Shipments',
-          desc: 'Inspect real-time GPS locations and transit speeds on arterial highway corridors.',
-          actionText: 'Live GPS Map',
-          actionPath: '/shipments',
-        },
-        {
-          step: 2,
-          title: 'Analyze AI ETA & Delay Risk',
-          desc: 'Evaluate congestion bottlenecks and update expected delivery timestamps dynamically.',
-          actionText: 'Fleet Telematics',
-          actionPath: '/trucks',
-        },
-      ],
-      authorizedData: [
-        { title: 'Inbound Shipments', desc: 'Track carrier dispatches, manifest details, and corridor progression.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Fleet & Trucks Telemetry', desc: 'Monitor vehicle sensors, driver information, and speed metrics.', accessLevel: 'FULL_CONTROL' },
-      ],
-      pipelineStageIndex: 2,
-      pipelineNotes: 'Your role governs Stage 3 (Highway Transit GPS) ensuring on-time delivery.',
-      proTips: [
-        'Use AI ETA prediction to detect potential delay risks early and coordinate with warehouse bays.',
-      ],
-    },
-    RECEIVING_QC_OPERATOR: {
-      roleTitle: 'Receiving & Quality Control Lead',
-      roleBadge: 'Receiving & QC',
-      department: 'Quality Assurance & Receiving',
-      icon: ClipboardCheck,
-      headerColor: 'from-purple-950 via-slate-900 to-purple-950',
-      accentColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
-      tagline: 'Inspect container unloads, sign off Goods Receipt Notes, and execute 5-pillar Quality Checks.',
-      workflowSteps: [
-        {
-          step: 1,
-          title: 'Inspect Inbound Container Unloading',
-          desc: 'Verify pallet manifests and verify product condition directly at the dock door.',
-          actionText: 'Inspect Cargo',
-          actionPath: '/grn',
-        },
-        {
-          step: 2,
-          title: 'Execute 5-Pillar Quality Inspection',
-          desc: 'Score product, quantity, packaging, documentation, and delivery pillars to update supplier ratings.',
-          actionText: 'Quality Checks',
-          actionPath: '/quality',
-        },
-      ],
-      authorizedData: [
-        { title: 'Goods Receipt Notes (GRN)', desc: 'Create, inspect, sign-off, and manage goods receipt records.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Quality Checks (QC)', desc: 'Conduct 5-pillar inspections, classify defect severity, and update vendor performance.', accessLevel: 'FULL_CONTROL' },
-      ],
-      pipelineStageIndex: 4,
-      pipelineNotes: 'Your role governs Stage 5 (QA Intake & GRN) and Quality Verification.',
-      proTips: [
-        'Use AI QC Damage Analysis to auto-classify defects and determine appropriate severity ratings.',
+        'POs are never sent automatically — always click SEND TO SUPPLIER after review.',
       ],
     },
     SUPPLIER: {
@@ -527,9 +283,176 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         'If docks are congested, your console will indicate your allocated staging yard parking slot.',
       ],
     },
+    GATE_POST_OFFICER: {
+      roleTitle: 'Facility Gate Post Officer & Yard Master',
+      roleBadge: 'Gate Post Officer',
+      department: 'Facility Gate Post, Yard & Dock Control',
+      icon: Radio,
+      headerColor: 'from-teal-950 via-slate-900 to-teal-950',
+      accentColor: 'text-teal-400 bg-teal-500/10 border-teal-500/30',
+      tagline: 'Verify arriving trucks, record gate check-in, allocate staging parking vs dock bays, and control live map editing.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Verify Inbound Carrier & Manifest Check-in',
+          desc: 'Scan vehicle plate number, driver identity, PO, and ASN before opening gate barrier.',
+          actionText: 'Gate Check-in',
+          actionPath: '/yard',
+        },
+        {
+          step: 2,
+          title: 'Allocate Staging Parking Slot or Dock Bay (D01-D06)',
+          desc: 'Evaluate AI dock recommendations and assign staging slot or direct unloading dock bay.',
+          actionText: 'Yard & Docks',
+          actionPath: '/yard',
+        },
+        {
+          step: 3,
+          title: 'Edit Operational Live Map & Status Overrides',
+          desc: 'Only Gate Post Officer possesses manual authority to update live operational locations and status milestones.',
+          actionText: 'Live Map Override',
+          actionPath: '/shipments',
+        },
+      ],
+      authorizedData: [
+        { title: 'Gate Check-in Queue', desc: 'Full authority to check in vehicles and inspect credentials.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Yard & Dock Allocations', desc: 'Assign parking slots and dock doors.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Operational Location & Status', desc: 'Exclusive manual location edit permissions.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 3,
+      pipelineNotes: 'Only the GATE_POST_OFFICER may manually edit the live shipment map/location.',
+      proTips: [
+        'AI recommends Dock vs Parking based on dwell queues; Gate Post Officer has final decision authority.',
+      ],
+    },
+    LOGISTICS: {
+      roleTitle: 'Inbound Logistics & Transportation Coordinator',
+      roleBadge: 'Logistics Coordinator',
+      department: 'Inbound Logistics & Telematics',
+      icon: Truck,
+      headerColor: 'from-sky-950 via-slate-900 to-sky-950',
+      accentColor: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
+      tagline: 'Monitor active trucks, highway corridors, live ETA predictions, and coordinate driver assignments.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Monitor Live Inbound Fleet on Highway Corridors',
+          desc: 'Track GPS satellite beacons, transit speeds, and route progression on Google Maps.',
+          actionText: 'Live Shipments Map',
+          actionPath: '/shipments',
+        },
+        {
+          step: 2,
+          title: 'Inspect AI Delay Predictions & Highway Bottlenecks',
+          desc: 'Analyze automated delay risk probabilities and proactively alert receiving docks.',
+          actionText: 'Fleet Telematics',
+          actionPath: '/trucks',
+        },
+        {
+          step: 3,
+          title: 'Coordinate Driver Assignments & Rejections',
+          desc: 'Resolve driver trip rejections and ensure replacement carrier dispatch.',
+          actionText: 'Carrier Directory',
+          actionPath: '/trucks',
+        },
+      ],
+      authorizedData: [
+        { title: 'Shipments & Fleet Telematics', desc: 'Real-time telemetry, GPS locations, and speed logs.', accessLevel: 'READ_ONLY' },
+        { title: 'Transportation Alerts', desc: 'Inspect delay warnings, route deviations, and carrier rejections.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 2,
+      pipelineNotes: 'LOGISTICS = MONITOR + COORDINATE. Location edits are reserved for Gate Post Officer.',
+      proTips: [
+        'Click on any shipment row in Live Shipments to instantly switch the Google Map tracking view.',
+      ],
+    },
+    RECEIVING_QC: {
+      roleTitle: 'Dock Receiving Intake & Quality Control Lead',
+      roleBadge: 'Receiving & QC',
+      department: 'Dock Receiving & Quality Assurance',
+      icon: ShieldCheck,
+      headerColor: 'from-purple-950 via-slate-900 to-purple-950',
+      accentColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
+      tagline: 'Supervise dockside unloading, create 100% manual GRNs, perform 5-pillar Quality Checks, and update supplier scorecards.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Update Unloading Status at Dock (AT_DOCK -> UNLOADED)',
+          desc: 'Monitor cargo discharge, pallet counts, and update dock door turnaround status.',
+          actionText: 'Yard Dock Bays',
+          actionPath: '/yard',
+        },
+        {
+          step: 2,
+          title: 'Create 100% Manual Goods Receipt Note (GRN)',
+          desc: 'Enter verified received, accepted, and damaged quantities manually (No OCR on GRN).',
+          actionText: 'Create Manual GRN',
+          actionPath: '/grn',
+        },
+        {
+          step: 3,
+          title: 'Execute 5-Pillar Quality Inspection & AI Analysis',
+          desc: 'Evaluate product quality, damage, packaging, documentation, and condition to finalize QC.',
+          actionText: 'Quality Check Inspection',
+          actionPath: '/quality',
+        },
+      ],
+      authorizedData: [
+        { title: 'Goods Receipt Notes (GRN)', desc: 'Create and edit manual receipt records.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Quality Check Reports', desc: 'Perform inspections, record defect scores, and upload evidence.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Supplier Scorecards', desc: 'Trigger automated supplier rating updates.', accessLevel: 'READ_WRITE' },
+      ],
+      pipelineStageIndex: 4,
+      pipelineNotes: 'Receiving and Quality Control are ONE combined role governing Stage 4 and Stage 5.',
+      proTips: [
+        'OCR is strictly prohibited for GRNs. All physical counts must be manually verified.',
+      ],
+    },
+    FINANCE: {
+      roleTitle: 'Financial Controller & Accounts Payable Lead',
+      roleBadge: 'Financial Controller',
+      department: 'Accounts Payable & Financial Audit',
+      icon: CreditCard,
+      headerColor: 'from-emerald-950 via-slate-900 to-emerald-950',
+      accentColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+      tagline: 'Perform AI OCR invoice extraction, execute PO + GRN + Invoice 3-way matching, manage holds, and release payments.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Intake Invoices (Manual Entry or AI OCR Upload)',
+          desc: 'Upload supplier invoice PDF/images for automated OCR extraction and review.',
+          actionText: 'Invoices & OCR',
+          actionPath: '/invoices',
+        },
+        {
+          step: 2,
+          title: 'Execute PO + GRN + Invoice 3-Way Match',
+          desc: 'Compare rates, quantities, and GST totals across PO, physical GRN, and Invoices.',
+          actionText: 'Exceptions Hub',
+          actionPath: '/exceptions',
+        },
+        {
+          step: 3,
+          title: 'Manage Payment Holds & Authorize NEFT Settlements',
+          desc: 'Place holds on price/quantity mismatches and release verified batch settlements.',
+          actionText: 'Payments Settlement',
+          actionPath: '/payments',
+        },
+      ],
+      authorizedData: [
+        { title: 'Invoices & OCR Records', desc: 'Upload, review, and correct invoice extractions.', accessLevel: 'FULL_CONTROL' },
+        { title: '3-Way Match & Exceptions', desc: 'Flag price/quantity variances and manage payment holds.', accessLevel: 'FULL_CONTROL' },
+        { title: 'Bank Settlement & Payouts', desc: 'Authorize and execute payment disbursements.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 5,
+      pipelineNotes: 'Finance owns Stage 6 (3-Way Matching & Invoices) and Stage 7 (Payment Settlements).',
+      proTips: [
+        'OCR is exclusively permitted for Invoices (strictly prohibited for POs and GRNs).',
+      ],
+    },
   };
 
-  const config = roleConfigs[role] || roleConfigs.ADMIN;
+  const config = (roleConfigs[role] || roleConfigs.ADMIN || roleConfigs.SYSTEM_ADMIN)!;
   const Icon = config.icon;
 
   const pipelineStages = [
