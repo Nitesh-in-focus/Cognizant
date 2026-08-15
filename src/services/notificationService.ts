@@ -27,7 +27,7 @@ export interface EmailDeliveryRecord {
 }
 
 // In-memory or localStorage delivery log for tracking
-const EMAIL_LOG_KEY = 'c2_email_delivery_logs';
+const EMAIL_LOG_KEY = 'supply_sync_email_delivery_logs';
 
 export function getEmailDeliveryLogs(): EmailDeliveryRecord[] {
   try {
@@ -49,14 +49,21 @@ export function saveEmailDeliveryLog(log: EmailDeliveryRecord) {
 
 // Role-to-email mapping
 const ROLE_EMAILS: Record<string, string> = {
-  PROCUREMENT_MANAGER: 'procurement@c2tower.com',
-  LOGISTICS_MANAGER: 'logistics@c2tower.com',
-  WAREHOUSE_MANAGER: 'warehouse@c2tower.com',
-  GATE_OPERATOR: 'gate@c2tower.com',
-  RECEIVING_QC_OPERATOR: 'receiving@c2tower.com',
-  FINANCE_MANAGER: 'finance@c2tower.com',
-  SYSTEM_ADMIN: 'admin@c2tower.com',
-  SUPPLIER: 'rahul.mehta@tataindustrial.com',
+  WORKER: 'ramesh.worker@supplysync.io',
+  PROCUREMENT_OFFICER: 'priya.procurement@supplysync.io',
+  LOGISTICS_GATE_POST: 'logistics.gate@supplysync.io',
+  RECEIVING_QC: 'ananya.qc@supplysync.io',
+  FINANCE: 'rohan.finance@supplysync.io',
+  TRUCK_DRIVER: 'rajesh.driver@supplysync.io',
+  SYSTEM_ADMIN: 'admin@supplysync.io',
+  SUPPLIER: 'supplier.contact@tataindustrial.com',
+  // Legacy mappings for compatibility
+  PROCUREMENT_MANAGER: 'priya.procurement@supplysync.io',
+  LOGISTICS_MANAGER: 'logistics.gate@supplysync.io',
+  WAREHOUSE_MANAGER: 'ananya.qc@supplysync.io',
+  GATE_OPERATOR: 'logistics.gate@supplysync.io',
+  RECEIVING_QC_OPERATOR: 'ananya.qc@supplysync.io',
+  FINANCE_MANAGER: 'rohan.finance@supplysync.io',
 };
 
 export async function sendEmailNotification(payload: EmailDispatchPayload): Promise<{
@@ -109,8 +116,8 @@ export async function sendEmailNotification(payload: EmailDispatchPayload): Prom
   const deliveredRecipients: string[] = [];
 
   for (const r of targetRoles) {
-    const recipientEmail = ROLE_EMAILS[r] || `${r.toLowerCase()}@c2tower.com`;
-    const subject = `[C2 ALERT] [${payload.severity}] ${payload.title} - ${payload.entity_number}`;
+    const recipientEmail = ROLE_EMAILS[r] || `${r.toLowerCase()}@supplysync.io`;
+    const subject = `[Supply Sync ALERT] [${payload.severity}] ${payload.title} - ${payload.entity_number}`;
     const preview = `${payload.message} | Supplier: ${payload.supplier_name || 'N/A'} | Action Link: ${payload.action_link}`;
 
     const record: EmailDeliveryRecord = {

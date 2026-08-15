@@ -77,7 +77,7 @@ export const AppSidebar: React.FC = () => {
       ]
     : [
         {
-          label: 'Control Tower',
+          label: 'Control Center',
           items: [
             { title: 'Dashboard', path: '/', icon: LayoutDashboard },
             {
@@ -85,7 +85,7 @@ export const AppSidebar: React.FC = () => {
               path: '/traceability',
               icon: GitFork,
               badge: 'E2E',
-              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'RECEIVING_QC', 'RECEIVING_QC_OPERATOR', 'FINANCE', 'FINANCE_MANAGER'],
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER', 'LOGISTICS_GATE_POST', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'RECEIVING_QC', 'RECEIVING_QC_OPERATOR', 'FINANCE', 'FINANCE_MANAGER'],
             },
           ],
         },
@@ -126,24 +126,24 @@ export const AppSidebar: React.FC = () => {
               path: '/shipments',
               icon: Truck,
               live: true,
-              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER'],
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS_GATE_POST', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER'],
             },
             {
               title: 'Fleet & Telematics',
               path: '/trucks',
               icon: Radio,
-              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR'],
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS_GATE_POST', 'LOGISTICS', 'LOGISTICS_MANAGER', 'GATE_POST_OFFICER', 'GATE_OPERATOR'],
             },
             {
               title: 'Gate & Yard Docks',
               path: '/yard',
               icon: Boxes,
-              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'RECEIVING_QC', 'RECEIVING_QC_OPERATOR'],
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'LOGISTICS_GATE_POST', 'GATE_POST_OFFICER', 'GATE_OPERATOR', 'RECEIVING_QC', 'RECEIVING_QC_OPERATOR'],
             },
           ],
         },
         {
-          label: 'Receiving & Quality (QC)',
+          label: 'Receiving + QC',
           items: [
             {
               title: 'Receiving & GRN',
@@ -192,7 +192,7 @@ export const AppSidebar: React.FC = () => {
               title: 'Analytics & Power BI',
               path: '/analytics',
               icon: BarChart3,
-              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER', 'LOGISTICS', 'LOGISTICS_MANAGER', 'FINANCE', 'FINANCE_MANAGER'],
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER', 'LOGISTICS_GATE_POST', 'LOGISTICS', 'LOGISTICS_MANAGER', 'FINANCE', 'FINANCE_MANAGER'],
             },
             {
               title: 'System Alerts',
@@ -224,10 +224,10 @@ export const AppSidebar: React.FC = () => {
         </div>
         <div>
           <div className="text-sm font-black tracking-wide text-white leading-none">
-            C2 CONTROL TOWER
+            SUPPLY SYNC
           </div>
           <div className="text-[10px] font-medium text-slate-400 leading-none mt-1">
-            Supply Chain Mission Control
+            Autonomous Supply Chain
           </div>
         </div>
       </div>

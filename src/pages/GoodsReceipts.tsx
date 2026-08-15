@@ -7,14 +7,20 @@ import {
   PenLine,
   CheckCircle2,
   AlertTriangle,
+  Sparkles,
+  Send,
+  Building2,
+  FileText,
+  Boxes,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { parseNlpGoodsReceipt, NlpGrnExtractedFields } from '../services/ai/grnNlpService';
 
 export const GoodsReceipts: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canFinalizeQC, logAuditAction } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canCreateGRN, canFinalizeQC, logAuditAction } = useApp();
 
   const [grns, setGrns] = useState<any[]>([]);
   const [pos, setPos] = useState<any[]>([]);
@@ -22,13 +28,19 @@ export const GoodsReceipts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Create GRN Modal (100% Manual Intake - Section 18 of updates2.md)
+  // Create GRN Modal (NLP Assistant & Manual Form - Section 20 of updates4.md)
   const [openCreate, setOpenCreate] = useState(false);
+  const [createMode, setCreateMode] = useState<'nlp' | 'manual'>('nlp');
+  const [nlpPrompt, setNlpPrompt] = useState('');
+  const [parsingNlp, setParsingNlp] = useState(false);
+  const [extractedDraft, setExtractedDraft] = useState<NlpGrnExtractedFields | null>(null);
+
   const [newGrn, setNewGrn] = useState({
     po_id: '',
     product_id: '',
     received_quantity: 100,
     damaged_quantity: 0,
+    missing_quantity: 0,
     notes: 'All boxes passed visual barcode & seal inspection.',
   });
 
@@ -52,7 +64,7 @@ export const GoodsReceipts: React.FC = () => {
             )
           `)
           .order('created_at', { ascending: false }),
-        supabase.from('purchase_orders').select('*'),
+        supabase.from('purchase_orders').select('*, suppliers(supplier_name), po_items(*, products(*))'),
         supabase.from('products').select('*'),
       ]);
 
@@ -74,9 +86,39 @@ export const GoodsReceipts: React.FC = () => {
     }
   };
 
+  const handleExtractNlp = async () => {
+    if (!nlpPrompt.trim()) {
+      showSnackbar('Please enter a natural language receiving statement', 'error');
+      return;
+    }
+
+    setParsingNlp(true);
+    try {
+      const extracted = await parseNlpGoodsReceipt(nlpPrompt, pos);
+      setExtractedDraft(extracted);
+
+      const targetPo = pos.find((p) => p.po_id === extracted.po_id) || pos[0];
+      const targetProdId = targetPo?.po_items?.[0]?.product_id || products[0]?.product_id;
+
+      setNewGrn({
+        po_id: extracted.po_id || pos[0]?.po_id,
+        product_id: targetProdId,
+        received_quantity: extracted.received_quantity,
+        damaged_quantity: extracted.damaged_quantity,
+        missing_quantity: extracted.missing_quantity,
+        notes: extracted.remarks || nlpPrompt,
+      });
+      showSnackbar(`AI successfully extracted receiving parameters (${extracted.confidence}% confidence)!`, 'success');
+    } catch (err: any) {
+      showSnackbar(`NLP Parsing Error: ${err.message}`, 'error');
+    } finally {
+      setParsingNlp(false);
+    }
+  };
+
   const handleCreateGrn = async () => {
-    if (!canFinalizeQC()) {
-      showSnackbar('Permission Denied: Only Receiving & QC Operators can log Goods Receipt Notes (GRN).', 'error');
+    if (!canCreateGRN()) {
+      showSnackbar('Permission Denied: Only Receiving + QC Lead can issue Goods Receipt Notes (GRN).', 'error');
       return;
     }
 
@@ -118,7 +160,7 @@ export const GoodsReceipts: React.FC = () => {
         },
       ]);
 
-      await logAuditAction('GRN_MANUAL_LOGGED', 'goods_receipts', grn.grn_id, {
+      await logAuditAction('GRN_LOGGED', 'goods_receipts', grn.grn_id, {
         grn_number: grnNumber,
         received_quantity: newGrn.received_quantity,
         damaged_quantity: newGrn.damaged_quantity,
@@ -136,6 +178,8 @@ export const GoodsReceipts: React.FC = () => {
 
       showSnackbar(`Goods Receipt Note #${grnNumber} issued! Accepted: ${acceptedQty} units.`, 'success');
       setOpenCreate(false);
+      setExtractedDraft(null);
+      setNlpPrompt('');
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
@@ -279,12 +323,12 @@ export const GoodsReceipts: React.FC = () => {
         </div>
       </div>
 
-      {/* Create GRN Modal (100% Manual Intake - Section 18 of updates2.md) */}
+      {/* Create GRN Modal (NLP Assistant & Manual Entry - Section 20 of updates4.md) */}
       <Modal
         isOpen={openCreate}
         onClose={() => setOpenCreate(false)}
-        title="Inbound Receiving & Dock Intake"
-        subtitle="Log arriving shipment counts directly verified at the unloading bay (Manual Only)"
+        title="Inbound Receiving & Dock Intake (GRN)"
+        subtitle="Speak or type natural language receiving reports, or verify physical item counts manually"
         maxWidth="lg"
         footer={
           <>
@@ -299,105 +343,206 @@ export const GoodsReceipts: React.FC = () => {
               className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
             >
               <ClipboardCheck className="w-3.5 h-3.5" />
-              Confirm & Log Intake
+              <span>Confirm & Issue GRN</span>
             </button>
           </>
         }
       >
         <div className="space-y-4 text-xs">
-          {/* Manual Form */}
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-              <span>Target Purchase Order</span>
-              {newGrn.po_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Matched</span>}
-            </label>
-            <select
-              value={newGrn.po_id}
-              onChange={(e) => setNewGrn({ ...newGrn, po_id: e.target.value })}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+          {/* Mode Switcher */}
+          <div className="flex rounded-xl bg-slate-100 p-1 gap-1 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setCreateMode('nlp')}
+              className={`flex-1 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                createMode === 'nlp'
+                  ? 'bg-white text-indigo-700 shadow-xs border border-slate-200/80'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              {pos.map((p) => (
-                <option key={p.po_id} value={p.po_id}>
-                  {p.po_number} ({p.suppliers?.supplier_name} • Val: ₹{Number(p.total_amount).toLocaleString()})
-                </option>
-              ))}
-            </select>
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              <span>AI NLP Assistant (Fastest)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCreateMode('manual')}
+              className={`flex-1 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                createMode === 'manual'
+                  ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <PenLine className="w-3.5 h-3.5 text-blue-600" />
+              <span>Manual Form Entry</span>
+            </button>
           </div>
 
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-              <span>Received Product SKU</span>
-              {newGrn.product_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Auto</span>}
-            </label>
-            <select
-              value={newGrn.product_id}
-              onChange={(e) => setNewGrn({ ...newGrn, product_id: e.target.value })}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-            >
-              {products.map((p) => (
-                <option key={p.product_id} value={p.product_id}>
-                  {p.product_name} ({p.product_code})
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* NLP Assistant Mode */}
+          {createMode === 'nlp' && (
+            <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-indigo-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Natural Language Delivery Statement</span>
+                </label>
+                <span className="text-[10px] text-indigo-600 font-semibold">Gemini 2.5 Flash</span>
+              </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <textarea
+                rows={3}
+                value={nlpPrompt}
+                onChange={(e) => setNlpPrompt(e.target.value)}
+                placeholder='e.g., "Received 950 units against PO-2026-8001, 20 units damaged in transit with broken seals and 30 units missing from Box 4."'
+                className="w-full p-3 rounded-lg bg-white border border-indigo-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              />
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                  <span className="font-semibold text-slate-700">Quick Prompt:</span>
+                  <button
+                    type="button"
+                    onClick={() => setNlpPrompt(`Received 950 units against ${pos[0]?.po_number || 'PO-2026-8001'}, 20 damaged with broken packaging and 30 units missing.`)}
+                    className="text-indigo-600 hover:underline cursor-pointer"
+                  >
+                    Load Sample Report
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleExtractNlp}
+                  disabled={parsingNlp || !nlpPrompt.trim()}
+                  className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{parsingNlp ? 'Extracting with AI...' : 'Parse Intake with AI'}</span>
+                </button>
+              </div>
+
+              {extractedDraft && (
+                <div className="p-3 rounded-lg bg-white border border-emerald-300 text-[11px] space-y-1 animate-in fade-in">
+                  <div className="flex items-center justify-between font-bold text-emerald-800">
+                    <span>AI Extracted Parameters ({extractedDraft.confidence}% Confidence)</span>
+                    <span className="text-[10px] bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900">VERIFIED</span>
+                  </div>
+                  <div className="text-slate-600 grid grid-cols-2 gap-2 mt-1">
+                    <div>PO: <strong>{extractedDraft.po_number || 'Auto-Matched'}</strong></div>
+                    <div>Received: <strong>{extractedDraft.received_quantity}</strong> units</div>
+                    <div>Damaged: <strong className="text-rose-600">{extractedDraft.damaged_quantity}</strong> units</div>
+                    <div>Missing: <strong className="text-amber-600">{extractedDraft.missing_quantity}</strong> units</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Form Fields for verification & manual editing */}
+          <div className="space-y-3 pt-1">
             <div>
-              <label className="font-semibold text-slate-700 block mb-1.5">
-                Total Received Quantity (Units)
+              <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
+                <span>Target Purchase Order</span>
+                {newGrn.po_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Matched</span>}
               </label>
-              <input
-                type="number"
-                value={newGrn.received_quantity}
-                onChange={(e) => setNewGrn({ ...newGrn, received_quantity: Number(e.target.value) })}
+              <select
+                value={newGrn.po_id}
+                onChange={(e) => setNewGrn({ ...newGrn, po_id: e.target.value })}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+              >
+                {pos.map((p) => (
+                  <option key={p.po_id} value={p.po_id}>
+                    {p.po_number} ({p.suppliers?.supplier_name} • Val: ₹{Number(p.total_amount).toLocaleString()})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
+                <span>Received Product SKU</span>
+                {newGrn.product_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Auto</span>}
+              </label>
+              <select
+                value={newGrn.product_id}
+                onChange={(e) => setNewGrn({ ...newGrn, product_id: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+              >
+                {products.map((p) => (
+                  <option key={p.product_id} value={p.product_id}>
+                    {p.product_name} ({p.product_code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Received Qty
+                </label>
+                <input
+                  type="number"
+                  value={newGrn.received_quantity}
+                  onChange={(e) => setNewGrn({ ...newGrn, received_quantity: Number(e.target.value) })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
+                  <span>Damaged Qty</span>
+                  {newGrn.damaged_quantity > 0 && <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded">Flagged</span>}
+                </label>
+                <input
+                  type="number"
+                  value={newGrn.damaged_quantity}
+                  onChange={(e) => setNewGrn({ ...newGrn, damaged_quantity: Number(e.target.value) })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Missing Qty
+                </label>
+                <input
+                  type="number"
+                  value={newGrn.missing_quantity}
+                  onChange={(e) => setNewGrn({ ...newGrn, missing_quantity: Number(e.target.value) })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+                />
+              </div>
+            </div>
+
+            {/* Net accepted preview */}
+            <div className={`p-3 rounded-lg border flex items-center gap-3 ${
+              newGrn.damaged_quantity > 0 || newGrn.missing_quantity > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'
+            }`}>
+              {newGrn.damaged_quantity > 0 || newGrn.missing_quantity > 0
+                ? <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                : <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              }
+              <div>
+                <div className="font-bold text-slate-900">
+                  Net Accepted: <span className="text-emerald-700 font-extrabold">
+                    {Math.max(0, newGrn.received_quantity - newGrn.damaged_quantity)} Units
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  {newGrn.damaged_quantity > 0 || newGrn.missing_quantity > 0
+                    ? 'Discrepancy recorded — exception route triggered for 3-way match.'
+                    : 'Physical units match manifest. Feeds directly into 3-way match reconciliation.'}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">QA Inspector Physical Notes</label>
+              <textarea
+                rows={2}
+                value={newGrn.notes}
+                onChange={(e) => setNewGrn({ ...newGrn, notes: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 resize-none"
               />
             </div>
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1.5 flex items-center justify-between">
-                <span>Damaged / Defective Count</span>
-                {newGrn.damaged_quantity > 0 && <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">Flagged</span>}
-              </label>
-              <input
-                type="number"
-                value={newGrn.damaged_quantity}
-                onChange={(e) => setNewGrn({ ...newGrn, damaged_quantity: Number(e.target.value) })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-              />
-            </div>
-          </div>
-
-          {/* Net accepted preview */}
-          <div className={`p-3.5 rounded-lg border flex items-center gap-3 ${
-            newGrn.damaged_quantity > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'
-          }`}>
-            {newGrn.damaged_quantity > 0
-              ? <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-              : <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            }
-            <div>
-              <div className="font-bold text-slate-900">
-                Net Accepted: <span className="text-emerald-700">
-                  {Math.max(0, newGrn.received_quantity - newGrn.damaged_quantity)} Units
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                {newGrn.damaged_quantity > 0
-                  ? 'Damage recorded — exception + debit note will be auto-generated for Finance.'
-                  : 'All physical units accepted. Feeds directly into 3-way match reconciliation.'}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">QA Inspector Physical Notes</label>
-            <textarea
-              rows={2}
-              value={newGrn.notes}
-              onChange={(e) => setNewGrn({ ...newGrn, notes: e.target.value })}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 resize-none"
-            />
           </div>
         </div>
       </Modal>

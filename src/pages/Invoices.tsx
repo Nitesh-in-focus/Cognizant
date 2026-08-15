@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ChevronUp,
   FileCheck,
+  Truck,
+  Package,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -27,6 +29,7 @@ export const Invoices: React.FC = () => {
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [pos, setPos] = useState<any[]>([]);
+  const [shipments, setShipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -44,6 +47,7 @@ export const Invoices: React.FC = () => {
   // Form fields (auto-populated from OCR, then editable)
   const [newInv, setNewInv] = useState({
     po_id: '',
+    shipment_id: '',
     supplier_id: '',
     invoice_number: `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`,
     invoiced_amount: 0,
@@ -58,15 +62,17 @@ export const Invoices: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [{ data: invData }, { data: poData }] = await Promise.all([
+      const [{ data: invData }, { data: poData }, { data: shpData }] = await Promise.all([
         supabase
           .from('invoices')
-          .select(`*, purchase_orders(po_number, total_amount, warehouses(warehouse_name)), suppliers(supplier_name, city)`)
+          .select(`*, purchase_orders(po_number, total_amount, warehouses(warehouse_name)), suppliers(supplier_name, city), shipments(shipment_number, total_quantity)`)
           .order('invoice_date', { ascending: false }),
-        supabase.from('purchase_orders').select('*'),
+        supabase.from('purchase_orders').select('*, po_items(*)'),
+        supabase.from('shipments').select('*'),
       ]);
       setInvoices(invData || []);
       setPos(poData || []);
+      setShipments(shpData || []);
       if (poData?.length && !newInv.po_id) {
         setNewInv((prev) => ({ ...prev, po_id: poData[0].po_id }));
       }
@@ -117,7 +123,6 @@ export const Invoices: React.FC = () => {
       setOcrStatus('Extraction complete!');
       setOcrProgress(100);
 
-      // Auto-populate form fields from OCR
       const matchedPo = (() => {
         if (result.poNumber) {
           const matchByPo = pos.find((p) =>
@@ -155,7 +160,24 @@ export const Invoices: React.FC = () => {
     }
   };
 
-  // ── Submit to Supabase + run 3-Way Match ─────────────────────────
+  // ── Helper: Calculate expected target value considering split shipments (Section 19) ──
+  const getExpectedInvoiceTarget = (poId: string, shipmentId?: string) => {
+    const po = pos.find((p) => p.po_id === poId);
+    if (!po) return 0;
+
+    if (shipmentId) {
+      const shp = shipments.find((s) => s.shipment_id === shipmentId);
+      if (shp) {
+        const unitPrice = po.po_items?.[0]?.unit_price || 250;
+        const subtotal = shp.total_quantity * unitPrice;
+        return Math.round(subtotal * 1.18);
+      }
+    }
+
+    return Number(po.total_amount) || 0;
+  };
+
+  // ── Submit to Supabase + run 3-Way Match (Section 19 of updates5.md) ─────────────────────────
   const handleSubmitAndMatch = async () => {
     if (!newInv.po_id) {
       showSnackbar('Please select a matching Purchase Order.', 'warning');
@@ -164,9 +186,10 @@ export const Invoices: React.FC = () => {
     try {
       setScanning(true);
       const selectedPo = pos.find((p) => p.po_id === newInv.po_id);
-      const poAmount = Number(selectedPo?.total_amount) || 0;
+      const expectedAmount = getExpectedInvoiceTarget(newInv.po_id, newInv.shipment_id);
       const invAmount = Number(newInv.invoiced_amount);
-      const isMatched = Math.abs(poAmount - invAmount) <= 1.0;
+      const diff = invAmount - expectedAmount;
+      const isMatched = Math.abs(diff) <= 2.0;
       const matchStatus = isMatched ? 'MATCHED' : 'MISMATCH';
 
       const { data: inv, error: invErr } = await supabase
@@ -174,9 +197,11 @@ export const Invoices: React.FC = () => {
         .insert([{
           invoice_number: newInv.invoice_number,
           po_id: newInv.po_id,
+          shipment_id: newInv.shipment_id || null,
           supplier_id: selectedPo?.supplier_id || null,
           invoice_date: new Date().toISOString(),
-          subtotal: ocrResult?.subtotal || invAmount,
+          subtotal: ocrResult?.subtotal || Math.round(invAmount / 1.18),
+          tax_amount: Math.round(invAmount - invAmount / 1.18),
           total_amount: invAmount,
           ocr_status: ocrResult ? 'COMPLETED' : 'MANUAL',
           match_status: matchStatus,
@@ -191,18 +216,18 @@ export const Invoices: React.FC = () => {
       if (invErr) throw invErr;
 
       if (!isMatched) {
-        const diff = invAmount - poAmount;
         await supabase.from('exceptions').insert([{
           exception_number: `EXC-OCR-${Math.floor(1000 + Math.random() * 9000)}`,
           po_id: newInv.po_id,
           invoice_id: inv.invoice_id,
+          shipment_id: newInv.shipment_id || null,
           exception_type: 'PRICE_MISMATCH',
-          expected_value: poAmount,
+          expected_value: expectedAmount,
           actual_value: invAmount,
           difference: diff,
           severity: 'HIGH',
           status: 'OPEN',
-          description: `OCR extracted ₹${invAmount.toLocaleString()} but PO contract is ₹${poAmount.toLocaleString()} (Δ ₹${diff.toLocaleString()}).`,
+          description: `OCR/Invoice billed ₹${invAmount.toLocaleString()} but calculated expected amount is ₹${expectedAmount.toLocaleString()} (Variance: ₹${diff.toLocaleString()}).`,
         }]);
 
         addAlert({
@@ -214,7 +239,7 @@ export const Invoices: React.FC = () => {
       } else {
         addAlert({
           title: `3-Way Match Verified: ${newInv.invoice_number}`,
-          message: `OCR + PO + GRN 100% aligned. Approved for NEFT disbursement.`,
+          message: `PO + Shipment + GRN + Invoice 100% aligned. Approved for NEFT disbursement.`,
           severity: 'success',
           link: '/payments',
         });
@@ -227,7 +252,6 @@ export const Invoices: React.FC = () => {
         isMatched ? 'success' : 'warning'
       );
 
-      // Reset
       setOpenOcrModal(false);
       setSelectedFile(null);
       setOcrResult(null);
@@ -248,36 +272,33 @@ export const Invoices: React.FC = () => {
       i.purchase_orders?.po_number?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const confidenceColor = (c: number) =>
-    c >= 80 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' :
-    c >= 50 ? 'text-amber-700 bg-amber-50 border-amber-200' :
-              'text-rose-700 bg-rose-50 border-rose-200';
+  const availableShipmentsForPo = shipments.filter((s) => s.po_id === newInv.po_id);
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-16">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Receipt className="w-5 h-5 text-blue-600" />
-            Invoices & Automated 3-Way Matching
+            <span>Invoices & Automated 3-Way Matching</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Real Tesseract.js OCR extraction, field auto-population, and deterministic cross-verification (PO ↔ GRN ↔ Invoice).
+            Real Tesseract.js OCR extraction, split-shipment cross-verification (PO ↔ Shipment ↔ GRN ↔ Invoice), and automated payment hold.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
           <button
             onClick={triggerRefresh}
-            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
+            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
             title="Refresh Invoices"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
           <button
             onClick={() => setOpenOcrModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
           >
             <Scan className="w-4 h-4" />
             <span>Upload & OCR Match</span>
@@ -287,9 +308,9 @@ export const Invoices: React.FC = () => {
 
       {/* 3-Way Match Rules Banner */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-        <h2 className="text-sm font-bold text-slate-900 mb-1">Automated 3-Way Reconciliation Rules</h2>
+        <h2 className="text-sm font-bold text-slate-900 mb-1">Automated 3-Way Reconciliation Rules (Split-Shipment Aware)</h2>
         <p className="text-xs text-slate-500 mb-4">
-          Every invoice is cross-verified by Tesseract.js OCR extraction against contractual POs and physical GRN warehouse counts.
+          Every invoice is cross-verified against contractual PO rates, specific shipment batch allocations, and dock GRN inspection counts.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
@@ -297,8 +318,8 @@ export const Invoices: React.FC = () => {
             <div className="text-slate-600 leading-relaxed">Unit prices on supplier invoices must match the authorized PO contract rate with 0% tolerance.</div>
           </div>
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-            <div className="font-bold text-slate-900 mb-1">2. Quantity Match (GRN ↔ Invoice)</div>
-            <div className="text-slate-600 leading-relaxed">Billed volume cannot exceed the QA-accepted count in the warehouse Goods Receipt Note.</div>
+            <div className="font-bold text-slate-900 mb-1">2. Quantity Match (Shipment ↔ GRN ↔ Invoice)</div>
+            <div className="text-slate-600 leading-relaxed">Billed volume corresponds to the specific shipment allocation and accepted warehouse GRN count.</div>
           </div>
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
             <div className="font-bold text-slate-900 mb-1">3. Automated Payment Hold</div>
@@ -333,6 +354,7 @@ export const Invoices: React.FC = () => {
                 <th className="py-3 px-4">Invoice Number</th>
                 <th className="py-3 px-4">Supplier Payee</th>
                 <th className="py-3 px-4">Matched PO #</th>
+                <th className="py-3 px-4">Shipment Ref</th>
                 <th className="py-3 px-4">Billed Amount</th>
                 <th className="py-3 px-4">OCR Status</th>
                 <th className="py-3 px-4">3-Way Match</th>
@@ -341,10 +363,10 @@ export const Invoices: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
-                <tr><td colSpan={7} className="py-8 text-center text-slate-400">Loading Invoices...</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-slate-400">Loading Invoices...</td></tr>
               ) : filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center">
+                  <td colSpan={8} className="py-10 text-center">
                     <div className="flex flex-col items-center gap-2 text-slate-400">
                       <Receipt className="w-8 h-8 opacity-30" />
                       <span className="text-sm font-medium">No invoices yet</span>
@@ -362,7 +384,10 @@ export const Invoices: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4">
                       <div className="font-semibold text-slate-900">{inv.purchase_orders?.po_number || 'N/A'}</div>
-                      <div className="text-[11px] text-slate-400">₹{Number(inv.purchase_orders?.total_amount || 0).toLocaleString()}</div>
+                      <div className="text-[11px] text-slate-400">Total: ₹{Number(inv.purchase_orders?.total_amount || 0).toLocaleString()}</div>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-slate-700">
+                      {inv.shipments?.shipment_number || (inv.shipment_id ? `SHP-${inv.shipment_id.slice(0, 6)}` : 'Full PO')}
                     </td>
                     <td className="py-3.5 px-4 font-bold text-slate-900">₹{Number(inv.total_amount || 0).toLocaleString()}</td>
                     <td className="py-3.5 px-4">
@@ -385,20 +410,20 @@ export const Invoices: React.FC = () => {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════ */}
-      {/* OCR Upload & 3-Way Match Modal                                */}
+      {/* OCR Upload & Split 3-Way Match Modal                          */}
       {/* ══════════════════════════════════════════════════════════════ */}
       <Modal
         isOpen={openOcrModal}
         onClose={() => !scanning && (setOpenOcrModal(false), setSelectedFile(null), setOcrResult(null))}
         title="Tesseract.js Document OCR Scanner & 3-Way Match"
-        subtitle="Upload a vendor invoice image or PDF — OCR runs entirely in your browser, no API key needed"
+        subtitle="Upload vendor invoice — OCR runs in browser with split-shipment quantity reconciliation"
         maxWidth="2xl"
         footer={
           <>
             <button
               onClick={() => { setOpenOcrModal(false); setSelectedFile(null); setOcrResult(null); }}
               disabled={scanning}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
               Cancel
             </button>
@@ -407,7 +432,7 @@ export const Invoices: React.FC = () => {
               <button
                 onClick={handleRunOcr}
                 disabled={scanning || !selectedFile}
-                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {scanning
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -419,7 +444,7 @@ export const Invoices: React.FC = () => {
               <button
                 onClick={handleSubmitAndMatch}
                 disabled={scanning}
-                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {scanning
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -434,7 +459,6 @@ export const Invoices: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs">
           {/* ── LEFT: File Drop Zone ── */}
           <div className="lg:col-span-5 space-y-3">
-            {/* Drop Zone */}
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
@@ -465,7 +489,7 @@ export const Invoices: React.FC = () => {
                   </span>
                   <button
                     onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setOcrResult(null); }}
-                    className="mt-2 text-[10px] font-bold text-rose-600 hover:underline flex items-center gap-0.5"
+                    className="mt-2 text-[10px] font-bold text-rose-600 hover:underline flex items-center gap-0.5 cursor-pointer"
                   >
                     <X className="w-3 h-3" /> Remove file
                   </button>
@@ -479,7 +503,7 @@ export const Invoices: React.FC = () => {
               )}
             </div>
 
-            {/* OCR Progress Bar */}
+            {/* OCR Progress */}
             {scanning && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
@@ -497,46 +521,6 @@ export const Invoices: React.FC = () => {
                 </div>
               </div>
             )}
-
-            {/* OCR Result Summary Badge */}
-            {ocrResult && !scanning && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-900 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    OCR Extraction Complete
-                  </span>
-                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border ${confidenceColor(ocrResult.confidence)}`}>
-                    {ocrResult.confidence}% Confidence
-                  </span>
-                </div>
-                <div className="text-[11px] text-emerald-800 space-y-0.5">
-                  <div>Fields extracted: Invoice#, Amount, Vendor, Date</div>
-                  <div>Auto-populated in the form →</div>
-                </div>
-              </div>
-            )}
-
-            {/* Raw Text Preview Toggle */}
-            {ocrResult && (
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <button
-                  onClick={() => setShowRawText(!showRawText)}
-                  className="w-full px-3 py-2 bg-slate-50 hover:bg-slate-100 flex items-center justify-between text-xs font-semibold text-slate-700 transition-colors"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Eye className="w-3.5 h-3.5 text-slate-500" />
-                    View Raw OCR Text
-                  </span>
-                  {showRawText ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-                {showRawText && (
-                  <div className="p-3 max-h-40 overflow-y-auto bg-slate-900 text-emerald-400 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
-                    {ocrResult.rawText || 'No text extracted.'}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* ── RIGHT: Extracted Fields Form ── */}
@@ -549,26 +533,50 @@ export const Invoices: React.FC = () => {
             </div>
 
             {/* PO Match Selector */}
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">
-                Match to Purchase Order <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={newInv.po_id}
-                onChange={(e) => setNewInv({ ...newInv, po_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-blue-500"
-              >
-                <option value="">— Select a Purchase Order —</option>
-                {pos.map((p) => (
-                  <option key={p.po_id} value={p.po_id}>
-                    {p.po_number} (Contract: ₹{Number(p.total_amount).toLocaleString()})
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Match to Purchase Order <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={newInv.po_id}
+                  onChange={(e) => setNewInv({ ...newInv, po_id: e.target.value, shipment_id: '' })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+                >
+                  <option value="">— Select a Purchase Order —</option>
+                  {pos.map((p) => (
+                    <option key={p.po_id} value={p.po_id}>
+                      {p.po_number} (Contract: ₹{Number(p.total_amount).toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Split Shipment Selector (Section 19 of updates5.md) */}
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Shipment Allocation (Split Match)
+                </label>
+                <select
+                  value={newInv.shipment_id}
+                  onChange={(e) => {
+                    const shpId = e.target.value;
+                    const exp = getExpectedInvoiceTarget(newInv.po_id, shpId);
+                    setNewInv({ ...newInv, shipment_id: shpId, invoiced_amount: exp });
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+                >
+                  <option value="">— Entire Full PO Contract —</option>
+                  {availableShipmentsForPo.map((s) => (
+                    <option key={s.shipment_id} value={s.shipment_id}>
+                      {s.shipment_number} ({s.total_quantity} units)
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              {/* Invoice Number */}
               <div>
                 <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
                   Invoice Number
@@ -578,11 +586,10 @@ export const Invoices: React.FC = () => {
                   type="text"
                   value={newInv.invoice_number}
                   onChange={(e) => setNewInv({ ...newInv, invoice_number: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-medium text-slate-800 focus:outline-none focus:border-blue-500"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-medium text-slate-800"
                 />
               </div>
 
-              {/* Total Amount */}
               <div>
                 <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
                   Billed Total (₹)
@@ -592,66 +599,17 @@ export const Invoices: React.FC = () => {
                   type="number"
                   value={newInv.invoiced_amount}
                   onChange={(e) => setNewInv({ ...newInv, invoiced_amount: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-blue-700 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              {/* Vendor Name */}
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
-                  Vendor Name
-                  {ocrResult?.vendorName && <span className="text-[9px] px-1 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold">OCR ✓</span>}
-                </label>
-                <input
-                  type="text"
-                  value={newInv.vendor_name}
-                  onChange={(e) => setNewInv({ ...newInv, vendor_name: e.target.value })}
-                  placeholder="Extracted from document..."
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              {/* Invoice Date */}
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1 flex items-center gap-1">
-                  Invoice Date
-                  {ocrResult?.invoiceDate && <span className="text-[9px] px-1 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold">OCR ✓</span>}
-                </label>
-                <input
-                  type="text"
-                  value={newInv.invoice_date}
-                  onChange={(e) => setNewInv({ ...newInv, invoice_date: e.target.value })}
-                  placeholder="DD/MM/YYYY"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-medium text-slate-800 focus:outline-none focus:border-blue-500"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-blue-700"
                 />
               </div>
             </div>
 
-            {/* GST breakdown from OCR */}
-            {ocrResult?.gstAmount && (
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 grid grid-cols-3 gap-2 text-[11px]">
-                <div>
-                  <span className="text-slate-500 uppercase font-bold text-[9px] block">Subtotal</span>
-                  <span className="font-bold text-slate-900">₹{(ocrResult.subtotal || 0).toLocaleString()}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 uppercase font-bold text-[9px] block">GST (18%)</span>
-                  <span className="font-bold text-amber-700">₹{(ocrResult.gstAmount || 0).toLocaleString()}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 uppercase font-bold text-[9px] block">Grand Total</span>
-                  <span className="font-bold text-blue-700">₹{(ocrResult.totalAmount || 0).toLocaleString()}</span>
-                </div>
-              </div>
-            )}
-
             {/* 3-Way Match Preview */}
             {newInv.po_id && newInv.invoiced_amount > 0 && (() => {
-              const po = pos.find((p) => p.po_id === newInv.po_id);
-              const poAmt = Number(po?.total_amount) || 0;
+              const expectedAmt = getExpectedInvoiceTarget(newInv.po_id, newInv.shipment_id);
               const invAmt = newInv.invoiced_amount;
-              const diff = invAmt - poAmt;
-              const passed = Math.abs(diff) <= 1;
+              const diff = invAmt - expectedAmt;
+              const passed = Math.abs(diff) <= 2;
               return (
                 <div className={`p-3.5 rounded-xl border flex items-start gap-3 ${
                   passed ? 'bg-emerald-50/60 border-emerald-300' : 'bg-rose-50/60 border-rose-300'
@@ -665,7 +623,7 @@ export const Invoices: React.FC = () => {
                       3-Way Match Preview: {passed ? '✅ WILL PASS' : '⚠️ WILL FAIL'}
                     </div>
                     <div className="text-[11px] mt-0.5 text-slate-600">
-                      PO Contract: <strong>₹{poAmt.toLocaleString()}</strong> &nbsp;|&nbsp;
+                      Expected Value: <strong>₹{expectedAmt.toLocaleString()}</strong> &nbsp;|&nbsp;
                       Invoice Billed: <strong>₹{invAmt.toLocaleString()}</strong> &nbsp;|&nbsp;
                       Variance: <strong className={passed ? 'text-emerald-700' : 'text-rose-700'}>
                         {diff > 0 ? '+' : ''}₹{diff.toLocaleString()}

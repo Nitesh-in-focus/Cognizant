@@ -283,52 +283,92 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         'If docks are congested, your console will indicate your allocated staging yard parking slot.',
       ],
     },
-    GATE_POST_OFFICER: {
-      roleTitle: 'Facility Gate Post Officer & Yard Master',
-      roleBadge: 'Gate Post Officer',
-      department: 'Facility Gate Post, Yard & Dock Control',
+    LOGISTICS_GATE_POST: {
+      roleTitle: 'Inbound Logistics & Facility Gate Post Master',
+      roleBadge: 'Logistics & Gate',
+      department: 'Inbound Logistics, Facility Gate Post & Docks',
       icon: Radio,
-      headerColor: 'from-teal-950 via-slate-900 to-teal-950',
-      accentColor: 'text-teal-400 bg-teal-500/10 border-teal-500/30',
-      tagline: 'Verify arriving trucks, record gate check-in, allocate staging parking vs dock bays, and control live map editing.',
+      headerColor: 'from-sky-950 via-slate-900 to-sky-950',
+      accentColor: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
+      tagline: 'Monitor highway corridor GPS beacons, verify inbound vehicles at the gate, and allocate yard parking & unloading docks.',
       workflowSteps: [
         {
           step: 1,
-          title: 'Verify Inbound Carrier & Manifest Check-in',
-          desc: 'Scan vehicle plate number, driver identity, PO, and ASN before opening gate barrier.',
+          title: 'Monitor Live Inbound Highway Fleet & AI ETAs',
+          desc: 'Track GPS satellite beacons, transit speeds, and route progression on Google Maps.',
+          actionText: 'Live Shipments Map',
+          actionPath: '/shipments',
+        },
+        {
+          step: 2,
+          title: 'Perform Gate Arrival Check-in & Security Verification',
+          desc: 'Verify license plates, driver credentials, PO, and ASN before admitting commercial trucks to the yard.',
           actionText: 'Gate Check-in',
           actionPath: '/yard',
         },
         {
-          step: 2,
+          step: 3,
           title: 'Allocate Staging Parking Slot or Dock Bay (D01-D06)',
-          desc: 'Evaluate AI dock recommendations and assign staging slot or direct unloading dock bay.',
+          desc: 'Evaluate AI dock recommendations and assign staging slots or direct unloading dock bays.',
           actionText: 'Yard & Docks',
+          actionPath: '/yard',
+        },
+      ],
+      authorizedData: [
+        { title: 'Fleet Telematics & Live Map', desc: 'Real-time GPS telemetry, speed logs, and delay risk metrics.', accessLevel: 'READ_ONLY' },
+        { title: 'Gate Check-in & Yard Docks', desc: 'Full authority to check in vehicles, manage yard queues, and assign dock bays.', accessLevel: 'FULL_CONTROL' },
+      ],
+      pipelineStageIndex: 2,
+      pipelineNotes: 'Logistics & Gate Post governs Stage 3 (Highway Transit) and Stage 4 (Gate & Dock Allocation). Unloading completion is reserved for Receiving + QC.',
+      proTips: [
+        'Dock cards in the Yard screen are interactive — click any dock door to open full manifest, driver, and shipment data.',
+      ],
+    },
+    GATE_POST_OFFICER: {
+      roleTitle: 'Inbound Logistics & Facility Gate Post Master',
+      roleBadge: 'Logistics & Gate',
+      department: 'Inbound Logistics, Facility Gate Post & Docks',
+      icon: Radio,
+      headerColor: 'from-teal-950 via-slate-900 to-teal-950',
+      accentColor: 'text-teal-400 bg-teal-500/10 border-teal-500/30',
+      tagline: 'Monitor highway corridor GPS beacons, verify inbound vehicles at the gate, and allocate yard parking & unloading docks.',
+      workflowSteps: [
+        {
+          step: 1,
+          title: 'Monitor Live Inbound Highway Fleet & AI ETAs',
+          desc: 'Track GPS satellite beacons, transit speeds, and route progression on Google Maps.',
+          actionText: 'Live Shipments Map',
+          actionPath: '/shipments',
+        },
+        {
+          step: 2,
+          title: 'Perform Gate Arrival Check-in & Security Verification',
+          desc: 'Verify license plates, driver credentials, PO, and ASN before admitting commercial trucks to the yard.',
+          actionText: 'Gate Check-in',
           actionPath: '/yard',
         },
         {
           step: 3,
-          title: 'Edit Operational Live Map & Status Overrides',
-          desc: 'Only Gate Post Officer possesses manual authority to update live operational locations and status milestones.',
-          actionText: 'Live Map Override',
-          actionPath: '/shipments',
+          title: 'Allocate Staging Parking Slot or Dock Bay (D01-D06)',
+          desc: 'Evaluate AI dock recommendations and assign staging slots or direct unloading dock bays.',
+          actionText: 'Yard & Docks',
+          actionPath: '/yard',
         },
       ],
       authorizedData: [
         { title: 'Gate Check-in Queue', desc: 'Full authority to check in vehicles and inspect credentials.', accessLevel: 'FULL_CONTROL' },
         { title: 'Yard & Dock Allocations', desc: 'Assign parking slots and dock doors.', accessLevel: 'FULL_CONTROL' },
-        { title: 'Operational Location & Status', desc: 'Exclusive manual location edit permissions.', accessLevel: 'FULL_CONTROL' },
       ],
       pipelineStageIndex: 3,
-      pipelineNotes: 'Only the GATE_POST_OFFICER may manually edit the live shipment map/location.',
+      pipelineNotes: 'Merged role governing transportation telematics and physical gate admittance.',
       proTips: [
-        'AI recommends Dock vs Parking based on dwell queues; Gate Post Officer has final decision authority.',
+        'Click any dock in the Yard workspace to view full real-time load, driver, and PO telemetry.',
       ],
     },
     LOGISTICS: {
-      roleTitle: 'Inbound Logistics & Transportation Coordinator',
-      roleBadge: 'Logistics Coordinator',
-      department: 'Inbound Logistics & Telematics',
+      roleTitle: 'Inbound Logistics & Facility Gate Post Master',
+      roleBadge: 'Logistics & Gate',
+      department: 'Inbound Logistics, Facility Gate Post & Docks',
       icon: Truck,
       headerColor: 'from-sky-950 via-slate-900 to-sky-950',
       accentColor: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
@@ -361,7 +401,7 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         { title: 'Transportation Alerts', desc: 'Inspect delay warnings, route deviations, and carrier rejections.', accessLevel: 'FULL_CONTROL' },
       ],
       pipelineStageIndex: 2,
-      pipelineNotes: 'LOGISTICS = MONITOR + COORDINATE. Location edits are reserved for Gate Post Officer.',
+      pipelineNotes: 'LOGISTICS & GATE POST = MONITOR + COORDINATE + GATE ALLOCATIONS.',
       proTips: [
         'Click on any shipment row in Live Shipments to instantly switch the Google Map tracking view.',
       ],
@@ -558,7 +598,7 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
                   Your Step-by-Step Daily Operational Routine
                 </h3>
                 <p className="text-slate-500">
-                  Follow this standardized 4-step workflow to execute your duties in C2 Control Tower:
+                  Follow this standardized 4-step workflow to execute your duties in Supply Sync:
                 </p>
               </div>
 

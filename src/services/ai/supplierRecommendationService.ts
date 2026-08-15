@@ -7,6 +7,8 @@ export interface SupplierCandidate {
   city: string;
   quality_score: number;
   delivery_score: number;
+  quantity_accuracy_score?: number;
+  damage_rate?: number;
   overall_score: number;
   unit_price: number;
   lead_time_days: number;
@@ -29,6 +31,9 @@ export interface SupplierAiRecommendation {
   }>;
 }
 
+/**
+ * Gemini Strategic Sourcing Multi-Criteria Recommendation Engine (Section 30 of updates5.md)
+ */
 export async function getAiSupplierRecommendation(
   prId: string,
   productId: string,
@@ -39,16 +44,21 @@ export async function getAiSupplierRecommendation(
     throw new Error('No candidate suppliers available for evaluation');
   }
 
-  // 1. Calculate baseline multi-criteria score
+  // 1. Calculate baseline multi-criteria score incorporating QC feedback loop
   const minPrice = Math.min(...candidates.map((c) => c.unit_price || 100));
   const scored = candidates.map((cand) => {
     const priceScore = Math.max(0, 100 - (((cand.unit_price - minPrice) / (minPrice || 1)) * 100));
     const reliabilityScore = Math.max(20, 100 - (cand.exception_count * 15));
+    const qtyAccScore = cand.quantity_accuracy_score || 95;
+    const damagePenalty = (cand.damage_rate || 0.5) * 5; // Penalty for damage rate
+
     const totalScore = (
-      (cand.quality_score * 0.35) +
+      (cand.quality_score * 0.30) +
       (cand.delivery_score * 0.25) +
-      (priceScore * 0.20) +
-      (reliabilityScore * 0.20)
+      (qtyAccScore * 0.15) +
+      (priceScore * 0.15) +
+      (reliabilityScore * 0.15) -
+      damagePenalty
     );
     return { ...cand, totalScore: Math.round(totalScore * 10) / 10 };
   }).sort((a, b) => b.totalScore - a.totalScore);
@@ -56,10 +66,11 @@ export async function getAiSupplierRecommendation(
   const best = scored[0];
   let confidence = Math.min(96, Math.max(78, Math.round(best.totalScore)));
   let reasons: string[] = [
-    `Strong Quality Rating: ${best.quality_score}% inspection pass rate.`,
+    `Superior QA Inspection Rating: ${best.quality_score}% QC pass rate.`,
     `On-Time Delivery Performance: ${best.delivery_score}% OTIF track record.`,
-    `Capacity Readiness: Proven ability to fulfill ${requiredQuantity.toLocaleString()} units with ${best.lead_time_days}-day lead time.`,
-    `Lowest Historical Exceptions: Only ${best.exception_count} recorded variances in previous orders.`,
+    `Quantity Accuracy: ${best.quantity_accuracy_score || 98}% fulfillment precision.`,
+    `Capacity Readiness: Proven capability to deliver ${requiredQuantity.toLocaleString()} units within ${best.lead_time_days} days.`,
+    `Clean Operational Audit: Only ${best.exception_count} variance tickets recorded.`,
   ];
   let riskFactors: string[] = [];
   if (best.lead_time_days > 7) {
@@ -76,19 +87,19 @@ export async function getAiSupplierRecommendation(
   if (isGeminiConfigured()) {
     try {
       const prompt = `Evaluate the following suppliers for a Purchase Requisition of ${requiredQuantity.toLocaleString()} units (Product ID: ${productId}).
-Candidates:
+Candidate Supplier Performance Matrix (Fed from QC & Receiving audits):
 ${JSON.stringify(candidates, null, 2)}
 
-Respond with JSON format matching:
+Respond with strictly valid JSON:
 {
   "recommended_supplier_name": "${best.supplier_name}",
-  "confidence": 92,
+  "confidence": 94,
   "reasons": ["reason1", "reason2", "reason3"],
   "risk_factors": ["risk1", "risk2"]
 }`;
 
       const geminiRes = await generateGeminiContent(prompt, {
-        systemInstruction: 'You are an Enterprise Strategic Sourcing AI. Perform multi-criteria trade-off analysis between cost, quality, delivery, and capacity. Return strictly valid JSON.',
+        systemInstruction: 'You are an Enterprise Strategic Sourcing AI. Perform multi-criteria trade-off analysis between cost, QC ratings, delivery score, damage rate, and capacity. Return strictly valid JSON.',
         responseMimeType: 'application/json',
         temperature: 0.2,
       });
@@ -117,7 +128,7 @@ Respond with JSON format matching:
     highlight: `Alt Choice • Quality: ${alt.quality_score}% | Rate: ₹${alt.unit_price}`,
   }));
 
-  const reasoningSummary = `AI evaluated ${candidates.length} candidate suppliers. Recommended ${best.supplier_name} with ${confidence}% confidence based on superior quality rating (${best.quality_score}%) and reliable delivery history.`;
+  const reasoningSummary = `AI evaluated ${candidates.length} candidate suppliers based on live QC scores. Recommended ${best.supplier_name} with ${confidence}% confidence based on superior quality rating (${best.quality_score}%) and reliable delivery history.`;
 
   const recommendationResult: SupplierAiRecommendation = {
     recommended_supplier_id: best.supplier_id,

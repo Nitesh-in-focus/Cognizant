@@ -116,6 +116,7 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
   const initialIndex = shipment?.status === 'ARRIVED' ? 5 : ((parseInt((shipment?.shipment_number || '').replace(/\D/g, ''), 10) % 4) + 1);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(initialIndex);
+  const [isSimulationMode, setIsSimulationMode] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState<1 | 2 | 5>(1);
   const [mapViewMode, setMapViewMode] = useState<'interactive' | 'satellite' | 'corridor'>('interactive');
@@ -284,7 +285,7 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
       {/* Top Header Controls Bar */}
       <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-blue-600 text-white shadow-xs">
+          <div className={`p-2 rounded-lg text-white shadow-xs ${isSimulationMode ? 'bg-amber-600' : 'bg-blue-600'}`}>
             <Navigation className="w-4 h-4" />
           </div>
           <div>
@@ -292,10 +293,17 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
               <h3 className="text-sm font-bold text-slate-900 leading-none">
                 {shipment?.shipment_number || 'Live Highway Corridor GPS'}
               </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
-                Live Tracking Active
-              </span>
+              {isSimulationMode ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                  SIMULATION MODE
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping" />
+                  LIVE TRACKING (GPS / TELEMATICS)
+                </span>
+              )}
             </div>
             <div className="text-xs text-slate-500 mt-1">
               Route: <strong className="text-slate-800">{originName} ➔ {destName}</strong> • Carrier: <strong className="text-blue-600">{shipment?.purchase_orders?.suppliers?.supplier_name || 'National Logistics'}</strong>
@@ -303,62 +311,98 @@ export const TruckTrackingMap: React.FC<TruckTrackingMapProps> = ({
           </div>
         </div>
 
-        {/* Playback & Manual Override Toolbar (Section 22 of updates3.md) */}
-        {canEditLocation() ? (
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1 shadow-2xs">
-            <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-colors ${
-                isPlaying
-                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-              title={isPlaying ? 'Pause Simulation' : 'Play Simulation'}
-            >
-              {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
-              <span>{isPlaying ? 'Pause' : 'Gate GPS Override'}</span>
-            </button>
+        {/* Mode Selector & Simulation Sandbox Controls */}
+        <div className="flex items-center gap-2">
+          {isSimulationMode ? (
+            <div className="flex items-center gap-1.5 bg-amber-50/80 border border-amber-200 rounded-lg p-1 shadow-2xs">
+              <button
+                onClick={() => setIsPlaying(!isPlaying)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-colors ${
+                  isPlaying
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-amber-700 text-white hover:bg-amber-800'
+                }`}
+                title={isPlaying ? 'Pause Simulation' : 'Play Simulation'}
+              >
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+                <span>{isPlaying ? 'Pause' : 'Play Sim'}</span>
+              </button>
 
-            <button
-              onClick={handleStepForward}
-              className="p-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-semibold px-2 transition-colors cursor-pointer"
-              title="Step Next Waypoint"
-            >
-              Step +1
-            </button>
+              <button
+                onClick={handleStepForward}
+                className="p-1 rounded hover:bg-amber-100 text-amber-900 text-xs font-semibold px-2 transition-colors cursor-pointer"
+                title="Step Next Waypoint"
+              >
+                Step +1
+              </button>
 
-            <button
-              onClick={handleReset}
-              className="p-1.5 rounded hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
-              title="Reset to Start"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
+              <button
+                onClick={handleReset}
+                className="p-1.5 rounded hover:bg-amber-100 text-amber-700 transition-colors cursor-pointer"
+                title="Reset to Start"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
 
-            <div className="h-4 w-px bg-slate-200 mx-1" />
+              <div className="h-4 w-px bg-amber-300 mx-1" />
 
-            {/* Speed Selector */}
-            <div className="flex items-center text-[10px] font-bold">
-              {([1, 2, 5] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setPlaySpeed(s)}
-                  className={`px-1.5 py-0.5 rounded transition-colors ${
-                    playSpeed === s ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'
-                  }`}
-                >
-                  {s}x
-                </button>
-              ))}
+              {/* Speed Selector */}
+              <div className="flex items-center text-[10px] font-bold">
+                {([1, 2, 5] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setPlaySpeed(s)}
+                    className={`px-1.5 py-0.5 rounded transition-colors ${
+                      playSpeed === s ? 'bg-amber-900 text-white' : 'text-amber-700 hover:text-amber-950'
+                    }`}
+                  >
+                    {s}x
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-4 w-px bg-amber-300 mx-1" />
+
+              <button
+                onClick={() => {
+                  setIsSimulationMode(false);
+                  setIsPlaying(false);
+                }}
+                className="px-2 py-1 rounded bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Exit Sim
+              </button>
             </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold">
-            <Radio className="w-3.5 h-3.5 text-cyan-600 animate-pulse" />
-            <span>Trusted Telematics (View-Only)</span>
-          </div>
-        )}
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                <Radio className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                <span>GPS Telematics (1.2s ping)</span>
+              </div>
+
+              {canEditLocation() && (
+                <button
+                  onClick={() => setIsSimulationMode(true)}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer flex items-center gap-1"
+                  title="Enter Highway Corridor Simulation Mode"
+                >
+                  <span>Simulation Sandbox</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {isSimulationMode && (
+        <div className="bg-amber-500/15 border-b border-amber-200 px-4 py-1.5 text-amber-900 text-[11px] font-semibold flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+            <span>SIMULATION SANDBOX ACTIVE: Testing waypoint progression and automated ETA recalculation.</span>
+          </div>
+          <span className="text-[10px] text-amber-700 uppercase tracking-wider font-bold">Telemetry Source: SIMULATION</span>
+        </div>
+      )}
 
       {/* Map Display Container */}
       <div className={`relative ${compact ? 'h-64' : 'h-80 sm:h-96'} w-full bg-slate-950 overflow-hidden`}>

@@ -6,12 +6,13 @@ export type UserRole =
   | 'PROCUREMENT_OFFICER'
   | 'SUPPLIER'
   | 'TRUCK_DRIVER'
-  | 'LOGISTICS'
-  | 'GATE_POST_OFFICER'
+  | 'LOGISTICS_GATE_POST'
   | 'RECEIVING_QC'
   | 'FINANCE'
+  | 'SYSTEM_ADMIN'
   // Legacy aliases for backward compatibility:
-  | 'SYSTEM_ADMIN' 
+  | 'LOGISTICS'
+  | 'GATE_POST_OFFICER'
   | 'PROCUREMENT_MANAGER' 
   | 'LOGISTICS_MANAGER' 
   | 'GATE_OPERATOR' 
@@ -32,6 +33,7 @@ export interface AppUser {
   last_login?: string;
   supplier_id?: string; // For SUPPLIER role data isolation
   truck_id?: string; // For TRUCK_DRIVER role data isolation
+  driver_code?: string; // Unique Driver ID (e.g. DRV-2026-9901)
 }
 
 export type ToastSeverity = 'error' | 'warning' | 'info' | 'success';
@@ -116,7 +118,7 @@ export interface AppContextType {
 export const defaultPersonaUsers: Record<string, AppUser> = {
   WORKER: {
     user_id: 'a0000000-0000-4000-8000-000000000010',
-    email: 'ramesh.worker@c2tower.com',
+    email: 'ramesh.worker@supplysync.io',
     full_name: 'Ramesh Patil',
     role: 'WORKER',
     department: 'Shop Floor & Assembly Operations',
@@ -125,7 +127,7 @@ export const defaultPersonaUsers: Record<string, AppUser> = {
   },
   PROCUREMENT_OFFICER: {
     user_id: 'a0000000-0000-4000-8000-000000000002',
-    email: 'priya.procurement@c2tower.com',
+    email: 'priya.procurement@supplysync.io',
     full_name: 'Priya Sharma',
     role: 'PROCUREMENT_OFFICER',
     department: 'Strategic Sourcing & Vendor Procurement',
@@ -144,34 +146,44 @@ export const defaultPersonaUsers: Record<string, AppUser> = {
   },
   TRUCK_DRIVER: {
     user_id: 'a0000000-0000-4000-8000-000000000009',
-    email: 'rajesh.driver@c2tower.com',
+    email: 'rajesh.driver@supplysync.io',
     full_name: 'Rajesh Sharma',
     role: 'TRUCK_DRIVER',
     department: 'BlueDart Inbound Fleet Logistics',
     phone: '+91 98234 56789',
+    driver_code: 'DRV-2026-9901',
     avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150',
+  },
+  LOGISTICS_GATE_POST: {
+    user_id: 'a0000000-0000-4000-8000-000000000007',
+    email: 'logistics.gate@supplysync.io',
+    full_name: 'Vikram Malhotra',
+    role: 'LOGISTICS_GATE_POST',
+    department: 'Inbound Logistics & Facility Gate Control',
+    phone: '+91 98200 11007',
+    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150',
   },
   LOGISTICS: {
     user_id: 'a0000000-0000-4000-8000-000000000007',
-    email: 'vikram.logistics@c2tower.com',
+    email: 'logistics.gate@supplysync.io',
     full_name: 'Vikram Malhotra',
-    role: 'LOGISTICS',
-    department: 'Inbound Logistics & Corridor Fleet Tracking',
+    role: 'LOGISTICS_GATE_POST',
+    department: 'Inbound Logistics & Facility Gate Control',
     phone: '+91 98200 11007',
     avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150',
   },
   GATE_POST_OFFICER: {
     user_id: 'a0000000-0000-4000-8000-000000000004',
-    email: 'suresh.gate@c2tower.com',
+    email: 'suresh.gate@supplysync.io',
     full_name: 'Suresh Kumar',
-    role: 'GATE_POST_OFFICER',
+    role: 'LOGISTICS_GATE_POST',
     department: 'Facility Gate Post, Yard & Dock Control',
     phone: '+91 98200 11004',
     avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
   },
   RECEIVING_QC: {
     user_id: 'a0000000-0000-4000-8000-000000000005',
-    email: 'ananya.qc@c2tower.com',
+    email: 'ananya.qc@supplysync.io',
     full_name: 'Ananya Iyer',
     role: 'RECEIVING_QC',
     department: 'Dock Receiving Intake & Quality Inspection (QC)',
@@ -180,53 +192,7 @@ export const defaultPersonaUsers: Record<string, AppUser> = {
   },
   FINANCE: {
     user_id: 'a0000000-0000-4000-8000-000000000006',
-    email: 'rohan.finance@c2tower.com',
-    full_name: 'Rohan Verma',
-    role: 'FINANCE',
-    department: 'Financial Controller & Accounts Payable',
-    phone: '+91 98200 11006',
-    avatar_url: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150',
-  },
-  // Aliases for compatibility
-  PROCUREMENT_MANAGER: {
-    user_id: 'a0000000-0000-4000-8000-000000000002',
-    email: 'priya.procurement@c2tower.com',
-    full_name: 'Priya Sharma',
-    role: 'PROCUREMENT_OFFICER',
-    department: 'Strategic Sourcing & Vendor Procurement',
-    phone: '+91 98200 11002',
-    avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
-  },
-  LOGISTICS_MANAGER: {
-    user_id: 'a0000000-0000-4000-8000-000000000007',
-    email: 'vikram.logistics@c2tower.com',
-    full_name: 'Vikram Malhotra',
-    role: 'LOGISTICS',
-    department: 'Inbound Logistics & Corridor Fleet Tracking',
-    phone: '+91 98200 11007',
-    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150',
-  },
-  GATE_OPERATOR: {
-    user_id: 'a0000000-0000-4000-8000-000000000004',
-    email: 'suresh.gate@c2tower.com',
-    full_name: 'Suresh Kumar',
-    role: 'GATE_POST_OFFICER',
-    department: 'Facility Gate Post, Yard & Dock Control',
-    phone: '+91 98200 11004',
-    avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
-  },
-  RECEIVING_QC_OPERATOR: {
-    user_id: 'a0000000-0000-4000-8000-000000000005',
-    email: 'ananya.qc@c2tower.com',
-    full_name: 'Ananya Iyer',
-    role: 'RECEIVING_QC',
-    department: 'Dock Receiving Intake & Quality Inspection (QC)',
-    phone: '+91 98200 11005',
-    avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
-  },
-  FINANCE_MANAGER: {
-    user_id: 'a0000000-0000-4000-8000-000000000006',
-    email: 'rohan.finance@c2tower.com',
+    email: 'rohan.finance@supplysync.io',
     full_name: 'Rohan Verma',
     role: 'FINANCE',
     department: 'Financial Controller & Accounts Payable',
@@ -235,21 +201,85 @@ export const defaultPersonaUsers: Record<string, AppUser> = {
   },
   SYSTEM_ADMIN: {
     user_id: 'a0000000-0000-4000-8000-000000000001',
-    email: 'admin@c2tower.com',
+    email: 'admin@supplysync.io',
     full_name: 'Vikramaditya Rao',
     role: 'SYSTEM_ADMIN',
-    department: 'System Architecture & Security Administration',
+    department: 'Supply Sync Technical Administration',
     phone: '+91 98200 11001',
     avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
   },
   ADMIN: {
     user_id: 'a0000000-0000-4000-8000-000000000001',
-    email: 'admin@c2tower.com',
+    email: 'admin@supplysync.io',
     full_name: 'Vikramaditya Rao',
     role: 'SYSTEM_ADMIN',
-    department: 'System Architecture & Security Administration',
+    department: 'Supply Sync Technical Administration',
     phone: '+91 98200 11001',
     avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+  },
+  // Aliases for compatibility
+  PROCUREMENT_MANAGER: {
+    user_id: 'a0000000-0000-4000-8000-000000000002',
+    email: 'priya.procurement@supplysync.io',
+    full_name: 'Priya Sharma',
+    role: 'PROCUREMENT_OFFICER',
+    department: 'Strategic Sourcing & Vendor Procurement',
+    phone: '+91 98200 11002',
+    avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+  },
+  LOGISTICS_MANAGER: {
+    user_id: 'a0000000-0000-4000-8000-000000000007',
+    email: 'logistics.gate@supplysync.io',
+    full_name: 'Vikram Malhotra',
+    role: 'LOGISTICS_GATE_POST',
+    department: 'Inbound Logistics & Facility Gate Control',
+    phone: '+91 98200 11007',
+    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150',
+  },
+  GATE_OPERATOR: {
+    user_id: 'a0000000-0000-4000-8000-000000000004',
+    email: 'suresh.gate@supplysync.io',
+    full_name: 'Suresh Kumar',
+    role: 'LOGISTICS_GATE_POST',
+    department: 'Facility Gate Post, Yard & Dock Control',
+    phone: '+91 98200 11004',
+    avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
+  },
+  RECEIVING_QC_OPERATOR: {
+    user_id: 'a0000000-0000-4000-8000-000000000005',
+    email: 'ananya.qc@supplysync.io',
+    full_name: 'Ananya Iyer',
+    role: 'RECEIVING_QC',
+    department: 'Dock Receiving Intake & Quality Inspection (QC)',
+    phone: '+91 98200 11005',
+    avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
+  },
+  RECEIVING_OPERATOR: {
+    user_id: 'a0000000-0000-4000-8000-000000000005',
+    email: 'ananya.qc@supplysync.io',
+    full_name: 'Ananya Iyer',
+    role: 'RECEIVING_QC',
+    department: 'Dock Receiving Intake & Quality Inspection (QC)',
+    phone: '+91 98200 11005',
+    avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
+  },
+  FINANCE_MANAGER: {
+    user_id: 'a0000000-0000-4000-8000-000000000006',
+    email: 'rohan.finance@supplysync.io',
+    full_name: 'Rohan Verma',
+    role: 'FINANCE',
+    department: 'Financial Controller & Accounts Payable',
+    phone: '+91 98200 11006',
+    avatar_url: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150',
+  },
+  WAREHOUSE_MANAGER: {
+    user_id: 'a0000000-0000-4000-8000-000000000005',
+    email: 'ananya.qc@supplysync.io',
+    full_name: 'Ananya Iyer',
+    role: 'RECEIVING_QC',
+    department: 'Dock Receiving Intake & Quality Inspection (QC)',
+    phone: '+91 98200 11005',
+    avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
   },
 };
 
@@ -384,7 +414,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         await supabase.from('email_logs').insert([
           {
             recipient_email: cleanEmail,
-            subject: 'Your C2 Control Tower Verification Code',
+            subject: 'Your Supply Sync Verification Code',
             template_name: 'email_otp_login',
             severity: 'INFO',
             status: 'SENT',
@@ -570,9 +600,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     role: UserRole;
     department: string;
     phone?: string;
+    supplier_id?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     try {
       const emailClean = userData.email.trim().toLowerCase();
+      const generatedDriverCode = userData.role === 'TRUCK_DRIVER'
+        ? `DRV-2026-${Math.floor(1000 + Math.random() * 9000)}`
+        : undefined;
 
       const { data, error } = await supabase
         .from('app_users')
@@ -582,7 +616,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             password_hash: userData.password,
             full_name: userData.full_name,
             role: userData.role,
-            department: userData.department || 'Supply Chain Management',
+            department: userData.department || (userData.role === 'TRUCK_DRIVER' ? 'Inbound Fleet Logistics' : 'Supply Chain Management'),
             phone: userData.phone || '+91 98000 00000',
             avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
             last_login: new Date().toISOString(),
@@ -600,13 +634,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         role: data.role as UserRole,
         department: data.department,
         phone: data.phone,
+        driver_code: generatedDriverCode,
         avatar_url: data.avatar_url,
         last_login: data.last_login,
       };
 
       setCurrentUser(newUser);
       setRoleState(newUser.role);
-      showToast(`Welcome to C2 Tower, ${newUser.full_name}! Account created.`, 'success');
+      showToast(`Welcome to Supply Sync, ${newUser.full_name}! Account created.${generatedDriverCode ? ` (Driver ID: ${generatedDriverCode})` : ''}`, 'success');
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || 'Sign up registration failed' };
@@ -615,7 +650,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     setCurrentUser(null);
-    showToast('Logged out of C2 Control Tower session.', 'info');
+    showToast('Logged out of Supply Sync session.', 'info');
   };
 
   const triggerRefresh = () => {
@@ -657,8 +692,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }, 4000);
   };
 
-  // RBAC Permission Helpers based on updates3.md Section 10 Matrix
-  const normalizedRole = role === 'ADMIN' ? 'SYSTEM_ADMIN' : role === 'RECEIVING_OPERATOR' ? 'RECEIVING_QC' : role;
+  // RBAC Permission Helpers based on updates4.md 7 Functional Roles
+  const normalizedRole = 
+    role === 'ADMIN' ? 'SYSTEM_ADMIN' :
+    role === 'RECEIVING_OPERATOR' || role === 'RECEIVING_QC_OPERATOR' ? 'RECEIVING_QC' :
+    role === 'LOGISTICS' || role === 'GATE_POST_OFFICER' || role === 'GATE_OPERATOR' || role === 'LOGISTICS_MANAGER' ? 'LOGISTICS_GATE_POST' :
+    role === 'PROCUREMENT_MANAGER' ? 'PROCUREMENT_OFFICER' :
+    role === 'FINANCE_MANAGER' ? 'FINANCE' :
+    role;
+
   const isSupplier = normalizedRole === 'SUPPLIER';
   const effectiveSupplierId = currentUser?.supplier_id;
   const isDriver = normalizedRole === 'TRUCK_DRIVER';
@@ -668,15 +710,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const canApprovePR = () => {
-    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'PROCUREMENT_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canApprovePO = () => {
-    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'PROCUREMENT_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canSendPO = () => {
-    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'PROCUREMENT_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'PROCUREMENT_OFFICER' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canAcceptPO = (poSupplierId?: string) => {
@@ -702,33 +744,34 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return false;
   };
 
-  // Critical Location Rule (Section 22): ONLY Gate Post Officer can manually edit live operational map/location
+  // Section 7 & 17: Operational events may be managed by Logistics & Gate Post
   const canEditLocation = () => {
-    return normalizedRole === 'GATE_POST_OFFICER' || normalizedRole === 'GATE_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'LOGISTICS_GATE_POST' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canAssignDock = () => {
-    return normalizedRole === 'GATE_POST_OFFICER' || normalizedRole === 'GATE_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'LOGISTICS_GATE_POST' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
+  // Section 18: ONLY Receiving + QC can mark unloading as complete
   const canUpdateUnloading = () => {
-    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'RECEIVING_QC_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canCreateGRN = () => {
-    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'RECEIVING_QC_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canFinalizeQC = () => {
-    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'RECEIVING_QC_OPERATOR' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'RECEIVING_QC' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canApproveInvoice = () => {
-    return normalizedRole === 'FINANCE' || normalizedRole === 'FINANCE_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'FINANCE' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canReleasePayment = () => {
-    return normalizedRole === 'FINANCE' || normalizedRole === 'FINANCE_MANAGER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'FINANCE' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const canAcceptDriverTrip = (driverId?: string) => {
@@ -736,7 +779,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const canTransmitGps = () => {
-    return normalizedRole === 'TRUCK_DRIVER' || normalizedRole === 'GATE_POST_OFFICER' || normalizedRole === 'SYSTEM_ADMIN';
+    return normalizedRole === 'TRUCK_DRIVER' || normalizedRole === 'LOGISTICS_GATE_POST' || normalizedRole === 'SYSTEM_ADMIN';
   };
 
   const logAuditAction = async (action: string, entityType: string, entityId: string, details?: any) => {

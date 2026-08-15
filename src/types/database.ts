@@ -39,6 +39,7 @@ export interface PurchaseRequisition {
   pr_number: string;
   warehouse_id: string;
   priority: 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW';
+  priority_reason?: string;
   status: 'DRAFT' | 'PENDING_APPROVAL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CONVERTED';
   reason: string;
   natural_language_prompt?: string;
@@ -52,6 +53,7 @@ export interface PurchaseRequisition {
   created_at?: string;
   warehouses?: Warehouse;
   pr_items?: PRItem[];
+  purchase_orders?: PurchaseOrder | PurchaseOrder[];
 }
 
 export interface PRItem {
@@ -76,6 +78,7 @@ export interface PurchaseOrder {
     | 'APPROVED'
     | 'REJECTED'
     | 'SENT_TO_SUPPLIER'
+    | 'ACCEPTED_BY_SUPPLIER'
     | 'CONFIRMED'
     | 'SUPPLIER_REJECTED'
     | 'CLARIFICATION_REQUESTED'
@@ -100,7 +103,9 @@ export interface PurchaseOrder {
   created_at?: string;
   suppliers?: Supplier;
   warehouses?: Warehouse;
+  purchase_requisitions?: PurchaseRequisition;
   po_items?: POItem[];
+  shipments?: Shipment[];
 }
 
 export interface POItem {
@@ -118,8 +123,10 @@ export interface Shipment {
   shipment_id: string;
   shipment_number: string;
   po_id: string;
+  supplier_id?: string;
   destination_warehouse_id?: string;
   origin?: string;
+  destination?: string;
   dispatch_date?: string;
   expected_arrival?: string;
   actual_arrival?: string;
@@ -127,17 +134,72 @@ export interface Shipment {
   asn_number?: string;
   location_source?: 'GPS_TELEMATICS' | 'DECLARED_BY_SUPPLIER' | 'SIMULATED';
   driver_id?: string;
+  driver_code?: string;
+  driver_name?: string;
+  driver_phone?: string;
   driver_status?: 'PENDING' | 'ACCEPTED' | 'REJECTED';
   driver_rejection_reason?: string;
+  truck_id?: string;
+  vehicle_number?: string;
+  carrier_name?: string;
   distance_travelled_km?: number;
   distance_remaining_km?: number;
   parking_slot?: string;
   priority?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  status: 'PLANNED' | 'SCHEDULED' | 'DISPATCHED' | 'IN_TRANSIT' | 'ARRIVED_AT_FACILITY' | 'AT_GATE' | 'IN_YARD' | 'AT_DOCK' | 'UNLOADING' | 'UNLOADED' | 'RECEIVED' | 'ARRIVED' | 'DELIVERED';
+  status:
+    | 'CREATED'
+    | 'READY_FOR_DRIVER'
+    | 'DRIVER_REQUESTED'
+    | 'DRIVER_ACCEPTED'
+    | 'DRIVER_REJECTED'
+    | 'READY_FOR_DISPATCH'
+    | 'DISPATCHED'
+    | 'IN_TRANSIT'
+    | 'ARRIVED_AT_FACILITY'
+    | 'AT_GATE'
+    | 'IN_YARD'
+    | 'AT_DOCK'
+    | 'UNLOADING'
+    | 'UNLOADED'
+    | 'RECEIVED'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'PLANNED'
+    | 'SCHEDULED'
+    | 'ARRIVED'
+    | 'DELIVERED';
   total_quantity: number;
   created_at?: string;
   purchase_orders?: PurchaseOrder;
   warehouses?: Warehouse;
+  truck_locations?: TruckLocation[];
+}
+
+export interface DriverAssignmentRequest {
+  request_id: string;
+  shipment_id: string;
+  driver_id: string;
+  driver_code?: string;
+  driver_name?: string;
+  driver_phone?: string;
+  truck_id?: string;
+  vehicle_number?: string;
+  supplier_id: string;
+  sent_at: string;
+  expires_at: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
+  response_at?: string;
+  rejection_reason?: string;
+  shipment?: Shipment;
+  supplier?: Supplier;
+}
+
+export interface DriverHistorySummary {
+  accepted_count: number;
+  rejected_count: number;
+  expired_count: number;
+  cancelled_count: number;
+  completed_count: number;
 }
 
 export interface Truck {
@@ -145,6 +207,7 @@ export interface Truck {
   vehicle_number: string;
   driver_name: string;
   driver_phone?: string;
+  driver_code?: string;
   carrier_name?: string;
   truck_type?: string;
   capacity?: number;
@@ -201,9 +264,19 @@ export interface Dock {
   yard_id: string;
   dock_number: string;
   dock_type: 'INBOUND' | 'OUTBOUND' | 'HYBRID';
-  status: 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'MAINTENANCE';
+  status: 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'UNLOADING' | 'MAINTENANCE' | 'BLOCKED';
   capacity?: number;
   current_truck?: string;
+  current_shipment?: string;
+  driver_name?: string;
+  driver_phone?: string;
+  supplier_name?: string;
+  po_number?: string;
+  eta?: string;
+  arrival_time?: string;
+  unloading_start?: string;
+  unloading_end?: string;
+  remarks?: string;
   yards?: Yard;
 }
 
@@ -211,6 +284,7 @@ export interface YardEntry {
   yard_entry_id: string;
   truck_id: string;
   shipment_id?: string;
+  po_id?: string;
   yard_id: string;
   entry_time: string;
   exit_time?: string;
@@ -219,6 +293,7 @@ export interface YardEntry {
   gate_verified?: boolean;
   trucks?: Truck;
   shipments?: Shipment;
+  purchase_orders?: PurchaseOrder;
   yards?: Yard;
   dock_assignments?: DockAssignment[];
 }
@@ -265,12 +340,14 @@ export interface Invoice {
   invoice_id: string;
   invoice_number: string;
   po_id?: string;
+  shipment_id?: string;
   supplier_id: string;
   invoice_date: string;
   due_date?: string;
   subtotal?: number;
   tax_amount?: number;
   total_amount: number;
+  currency?: string;
   document_url?: string;
   ocr_status: 'NOT_STARTED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   match_status: 'PENDING' | 'MATCHED' | 'MISMATCH' | 'MANUAL_OVERRIDE';
@@ -278,7 +355,9 @@ export interface Invoice {
   created_at?: string;
   suppliers?: Supplier;
   purchase_orders?: PurchaseOrder;
+  shipments?: Shipment;
   invoice_items?: InvoiceItem[];
+  payments?: Payment[];
 }
 
 export interface InvoiceItem {
@@ -299,7 +378,8 @@ export interface ExceptionRecord {
   po_id?: string;
   invoice_id?: string;
   grn_id?: string;
-  exception_type: 'PRICE_MISMATCH' | 'QUANTITY_MISMATCH' | 'DAMAGED_GOODS' | 'UNAUTHORIZED_INVOICE' | 'DUPLICATE_BILLING';
+  shipment_id?: string;
+  exception_type: 'PRICE_MISMATCH' | 'QUANTITY_MISMATCH' | 'DAMAGED_GOODS' | 'UNAUTHORIZED_INVOICE' | 'DUPLICATE_BILLING' | 'TRANSIT_DELAY';
   expected_value?: number;
   actual_value?: number;
   difference?: number;
@@ -311,6 +391,7 @@ export interface ExceptionRecord {
   purchase_orders?: PurchaseOrder;
   invoices?: Invoice;
   goods_receipts?: GoodsReceipt;
+  shipments?: Shipment;
 }
 
 export interface Payment {
@@ -342,11 +423,22 @@ export interface QualityCheck {
   accepted_quantity: number;
   rejected_quantity: number;
   damaged_quantity: number;
-  product_quality_score: number; // Max 40
-  quantity_accuracy_score: number; // Max 20
-  packaging_score: number; // Max 15
-  documentation_score: number; // Max 10
-  delivery_condition_score: number; // Max 15
+  missing_quantity?: number;
+  // 8-factor evaluation (1-10 scale)
+  factor_product_quality?: number; // 1-10
+  factor_quantity_accuracy?: number; // 1-10
+  factor_packaging?: number; // 1-10
+  factor_damage_condition?: number; // 1-10
+  factor_documentation?: number; // 1-10
+  factor_delivery_condition?: number; // 1-10
+  factor_compliance?: number; // 1-10
+  factor_overall?: number; // 1-10
+  // Compatibility scores
+  product_quality_score: number;
+  quantity_accuracy_score: number;
+  packaging_score: number;
+  documentation_score: number;
+  delivery_condition_score: number;
   overall_score: number; // 0-100
   defect_rate?: number;
   status: 'PENDING' | 'IN_PROGRESS' | 'PASSED' | 'PASSED_WITH_ISSUES' | 'FAILED' | 'FINALIZED';
@@ -358,6 +450,7 @@ export interface QualityCheck {
   purchase_orders?: PurchaseOrder;
   products?: Product;
   warehouses?: Warehouse;
+  shipments?: Shipment;
 }
 
 export interface QualityCheckItem {
@@ -382,6 +475,9 @@ export interface SupplierPerformance {
   responsiveness_score: number; // 10%
   reliability_score: number; // 5%
   overall_score: number; // 100%
+  damage_rate?: number;
+  completed_orders?: number;
+  failed_qc_count?: number;
   sample_size: number;
   calculated_at: string;
   suppliers?: Supplier;
@@ -395,8 +491,25 @@ export interface SupplierScoreHistory {
   change: number;
   reason: string;
   source_quality_check_id?: string;
+  po_id?: string;
+  shipment_id?: string;
+  grn_id?: string;
   calculated_at: string;
   suppliers?: Supplier;
+}
+
+export interface NlpExtractionLog {
+  log_id: string;
+  raw_prompt: string;
+  extracted_product_name?: string;
+  extracted_quantity?: number;
+  extracted_required_date?: string;
+  extracted_priority?: string;
+  priority_reason?: string;
+  confidence: number;
+  worker_corrections?: any;
+  final_values?: any;
+  created_at: string;
 }
 
 export interface AiRecommendation {

@@ -59,25 +59,37 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
           .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
           .join(' ');
 
-  const roleLabels: Record<UserRole, { label: string; badge: string }> = {
+  const roleLabels: Partial<Record<UserRole, { label: string; badge: string }>> = {
     SYSTEM_ADMIN: { label: 'System Administration', badge: 'Sys Admin' },
-    ADMIN: { label: 'Executive Operations', badge: 'Admin' },
+    ADMIN: { label: 'System Administration', badge: 'Sys Admin' },
     WORKER: { label: 'Shop Floor & Assembly', badge: 'Worker' },
     PROCUREMENT_OFFICER: { label: 'Strategic Sourcing', badge: 'Procurement' },
     PROCUREMENT_MANAGER: { label: 'Strategic Sourcing', badge: 'Procurement' },
     SUPPLIER: { label: 'Tata Industrial Solutions', badge: 'Supplier' },
     TRUCK_DRIVER: { label: 'Carrier Fleet Driver', badge: 'Driver' },
-    LOGISTICS: { label: 'Inbound Logistics', badge: 'Logistics' },
-    LOGISTICS_MANAGER: { label: 'Inbound Logistics', badge: 'Logistics' },
-    GATE_POST_OFFICER: { label: 'Gate Security & Yard', badge: 'Gate Post' },
-    GATE_OPERATOR: { label: 'Gate Security & Yard', badge: 'Gate Post' },
-    RECEIVING_QC: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
-    RECEIVING_QC_OPERATOR: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
-    RECEIVING_OPERATOR: { label: 'Receiving & QC Lead', badge: 'Receiving & QC' },
+    LOGISTICS_GATE_POST: { label: 'Inbound Logistics & Gate Post', badge: 'Logistics & Gate' },
+    LOGISTICS: { label: 'Inbound Logistics & Gate Post', badge: 'Logistics & Gate' },
+    LOGISTICS_MANAGER: { label: 'Inbound Logistics & Gate Post', badge: 'Logistics & Gate' },
+    GATE_POST_OFFICER: { label: 'Inbound Logistics & Gate Post', badge: 'Logistics & Gate' },
+    GATE_OPERATOR: { label: 'Inbound Logistics & Gate Post', badge: 'Logistics & Gate' },
+    RECEIVING_QC: { label: 'Receiving + QC Lead', badge: 'Receiving + QC' },
+    RECEIVING_QC_OPERATOR: { label: 'Receiving + QC Lead', badge: 'Receiving + QC' },
+    RECEIVING_OPERATOR: { label: 'Receiving + QC Lead', badge: 'Receiving + QC' },
     FINANCE: { label: 'Financial Controller', badge: 'Finance' },
     FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
-    WAREHOUSE_MANAGER: { label: 'Distribution Hub', badge: 'Warehouse' },
+    WAREHOUSE_MANAGER: { label: 'Receiving + QC Lead', badge: 'Receiving + QC' },
   };
+
+  const primaryRoles: UserRole[] = [
+    'WORKER',
+    'PROCUREMENT_OFFICER',
+    'SUPPLIER',
+    'TRUCK_DRIVER',
+    'LOGISTICS_GATE_POST',
+    'RECEIVING_QC',
+    'FINANCE',
+    'SYSTEM_ADMIN',
+  ];
 
   const handleLogout = () => {
     logout();
@@ -88,7 +100,7 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
     <header className="sticky top-0 z-30 h-14 bg-white border-b border-slate-200 flex items-center justify-between px-5">
       {/* Left: Breadcrumbs */}
       <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold text-slate-400">Control Tower</span>
+        <span className="text-xs font-semibold text-slate-400">Supply Sync</span>
         <span className="text-xs text-slate-300">/</span>
         <span className="text-sm font-bold text-slate-900">{breadcrumbName}</span>
       </div>
@@ -115,7 +127,7 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
         <button
           onClick={onOpenGuide}
           className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 text-xs font-semibold transition-colors"
-          title="Learn How to Use C2 Control Tower"
+          title="Learn How to Use Supply Sync"
         >
           <BookOpen className="w-3.5 h-3.5 text-amber-600" />
           <span>System Guide</span>
@@ -282,7 +294,7 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
                 Switch Operational Persona
               </div>
 
-              {(Object.keys(roleLabels) as UserRole[]).map((r) => (
+              {primaryRoles.map((r) => (
                 <button
                   key={r}
                   onClick={() => {
@@ -294,8 +306,8 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
                   }`}
                 >
                   <div>
-                    <div className="font-semibold">{roleLabels[r].badge}</div>
-                    <div className="text-[10px] text-slate-400">{roleLabels[r].label}</div>
+                    <div className="font-semibold">{roleLabels[r]?.badge}</div>
+                    <div className="text-[10px] text-slate-400">{roleLabels[r]?.label}</div>
                   </div>
                   {role === r && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />}
                 </button>

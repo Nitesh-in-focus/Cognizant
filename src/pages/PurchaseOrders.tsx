@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShoppingCart,
   Plus,
@@ -18,6 +19,8 @@ import {
   FileText,
   Calendar,
   DollarSign,
+  ArrowRight,
+  ExternalLink,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -27,6 +30,8 @@ import { getAiSupplierRecommendation, SupplierAiRecommendation } from '../servic
 import { routeNotification } from '../services/notifications/notificationRouter';
 
 export const PurchaseOrders: React.FC = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApprovePO, canSendPO, logAuditAction, logStatusHistory, currentUser } = useApp();
 
   const [pos, setPos] = useState<any[]>([]);
@@ -36,7 +41,17 @@ export const PurchaseOrders: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'DRAFTS' | 'SUPPLIER_SENT' | 'REJECTED' | 'SUPPLIER_REJECTED'>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('po') || searchParams.get('pr') || '');
+
+  useEffect(() => {
+    const poParam = searchParams.get('po');
+    const prParam = searchParams.get('pr');
+    if (poParam) {
+      setSearchQuery(poParam);
+    } else if (prParam) {
+      setSearchQuery(prParam);
+    }
+  }, [searchParams]);
 
   // Create PO Modal state
   const [openCreate, setOpenCreate] = useState(false);
@@ -76,6 +91,7 @@ export const PurchaseOrders: React.FC = () => {
             *,
             suppliers(supplier_name, email, city),
             warehouses(warehouse_name, city),
+            purchase_requisitions(pr_id, pr_number, status, priority, reason),
             po_items(
               *,
               products(product_name, unit_of_measure)
@@ -332,6 +348,9 @@ export const PurchaseOrders: React.FC = () => {
     if (activeTab === 'SUPPLIER_SENT') {
       return matchSearch && p.status === 'SENT_TO_SUPPLIER';
     }
+    if (activeTab === 'ACCEPTED_BY_SUPPLIER') {
+      return matchSearch && (p.status === 'ACCEPTED_BY_SUPPLIER' || p.status === 'CONFIRMED');
+    }
     if (activeTab === 'REJECTED') {
       return matchSearch && p.status === 'REJECTED';
     }
@@ -420,6 +439,19 @@ export const PurchaseOrders: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('ACCEPTED_BY_SUPPLIER')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
+            activeTab === 'ACCEPTED_BY_SUPPLIER' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Accepted by Supplier</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 text-[10px]">
+            {pos.filter((p) => p.status === 'ACCEPTED_BY_SUPPLIER' || p.status === 'CONFIRMED').length}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('REJECTED')}
           className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
             activeTab === 'REJECTED' ? 'border-rose-600 text-rose-600' : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -499,6 +531,17 @@ export const PurchaseOrders: React.FC = () => {
                         <span className="text-[10px] text-slate-400">
                           {new Date(po.created_at || po.order_date).toLocaleDateString()}
                         </span>
+                        {(po.purchase_requisitions?.pr_number || po.pr_id) && (
+                          <button
+                            onClick={() => navigate(`/purchase-requisitions?pr=${po.purchase_requisitions?.pr_number || po.pr_id}`)}
+                            className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-bold transition-colors cursor-pointer"
+                            title="Jump to Originating Requisition (PR)"
+                          >
+                            <FileText className="w-2.5 h-2.5" />
+                            <span>Origin {po.purchase_requisitions?.pr_number || 'PR'}</span>
+                            <ArrowRight className="w-2.5 h-2.5" />
+                          </button>
+                        )}
                         {isDraftAi && (
                           <div className="text-[10px] text-indigo-600 flex items-center gap-1 mt-0.5">
                             <Sparkles className="w-2.5 h-2.5" />

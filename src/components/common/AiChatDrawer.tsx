@@ -25,7 +25,7 @@ export const AiChatDrawer: React.FC = () => {
     {
       id: 'welcome-1',
       sender: 'assistant',
-      content: `Hello **${currentUser?.full_name || 'Operator'}**! I am your **C2 AI Operational Assistant**.\n\nAsk me any operational question regarding live shipments, truck GPS telematics, dock scheduling, QC scores, or invoice 3-way matching.`,
+      content: `Hello **${currentUser?.full_name || 'Operator'}**! I am your **Supply Sync AI Operational Assistant**.\n\nAsk me any operational question regarding live shipments, truck GPS telematics, dock scheduling, QC scores, or invoice 3-way matching.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -78,7 +78,7 @@ export const AiChatDrawer: React.FC = () => {
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         sender: 'assistant',
-        content: `Error connecting to C2 AI Assistant: ${err.message}`,
+        content: `Error connecting to Supply Sync AI Assistant: ${err.message}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -96,7 +96,7 @@ export const AiChatDrawer: React.FC = () => {
           className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-full shadow-2xl shadow-blue-500/30 transition-all transform hover:scale-105 cursor-pointer font-bold text-xs"
         >
           <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-          <span>C2 AI Assistant</span>
+          <span>Supply Sync AI</span>
           <span className="w-2 h-2 rounded-full bg-emerald-400" />
         </button>
       )}
@@ -112,7 +112,7 @@ export const AiChatDrawer: React.FC = () => {
               </div>
               <div>
                 <div className="text-sm font-bold flex items-center gap-2">
-                  <span>C2 AI Assistant</span>
+                  <span>Supply Sync AI Assistant</span>
                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-300">
                     GEMINI
                   </span>
@@ -229,7 +229,7 @@ export const AiChatDrawer: React.FC = () => {
                 </div>
                 <div className="bg-slate-100 rounded-2xl p-3 text-slate-500 text-xs flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                  <span>C2 Assistant is reasoning across live telemetry...</span>
+                  <span>Supply Sync Assistant is reasoning across live telemetry...</span>
                 </div>
               </div>
             )}

@@ -36,11 +36,11 @@ export const App: React.FC = () => {
   const [openScenarioRunner, setOpenScenarioRunner] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
   const [openGuide, setOpenGuide] = useState(() => {
-    return !localStorage.getItem('c2_guide_seen');
+    return !localStorage.getItem('supply_sync_guide_seen');
   });
 
   const handleCloseGuide = () => {
-    localStorage.setItem('c2_guide_seen', 'true');
+    localStorage.setItem('supply_sync_guide_seen', 'true');
     setOpenGuide(false);
   };
 

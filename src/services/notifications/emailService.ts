@@ -37,7 +37,7 @@ export async function sendEmailWithLog(payload: EmailDispatchPayload): Promise<{
 
     // In a production backend, this invokes the SMTP / Gmail API / Resend / AWS SES integration.
     // In our browser environment, we simulate successful delivery and record the audit log.
-    console.info(`[C2 Email Engine] Sent email to ${payload.recipient_email}: "${payload.subject}" [Template: ${payload.template_name}]`);
+    console.info(`[Supply Sync Email Engine] Sent email to ${payload.recipient_email}: "${payload.subject}" [Template: ${payload.template_name}]`);
 
     return {
       success: true,

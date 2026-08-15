@@ -1,5 +1,5 @@
 /**
- * C2 Supply Chain Control Tower Design Tokens
+ * Supply Sync Autonomous Supply Chain Design Tokens
  * Adhering to 04_UI_UX_DESIGN_SYSTEM.md
  */
 

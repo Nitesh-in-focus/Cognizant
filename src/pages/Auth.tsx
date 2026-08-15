@@ -36,7 +36,7 @@ export const Auth: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<UserRole>('PROCUREMENT_MANAGER');
+  const [role, setRole] = useState<UserRole>('PROCUREMENT_OFFICER');
   const [department, setDepartment] = useState('Strategic Sourcing');
   const [phone, setPhone] = useState('+91 98200 11000');
 
@@ -79,44 +79,33 @@ export const Auth: React.FC = () => {
       title: 'Carrier Fleet Driver',
       name: defaultPersonaUsers.TRUCK_DRIVER.full_name,
       email: defaultPersonaUsers.TRUCK_DRIVER.email,
-      dept: 'BlueDart Logistics Fleet',
+      dept: 'BlueDart Logistics Fleet (ID: DRV-2026-9901)',
       icon: Truck,
       color: 'bg-cyan-600',
       badge: 'Driver App',
       desc: 'Accept trips, live GPS telematics beacon, travel distance, and dock status.',
     },
     {
-      role: 'LOGISTICS' as UserRole,
-      title: 'Logistics Coordinator',
-      name: defaultPersonaUsers.LOGISTICS.full_name,
-      email: defaultPersonaUsers.LOGISTICS.email,
-      dept: 'Inbound Logistics & Telematics',
-      icon: Truck,
-      color: 'bg-sky-600',
-      badge: 'Corridor Monitor',
-      desc: 'Monitor active trucks, delays, driver assignments, and transport exceptions.',
-    },
-    {
-      role: 'GATE_POST_OFFICER' as UserRole,
-      title: 'Gate Post Officer',
-      name: defaultPersonaUsers.GATE_POST_OFFICER.full_name,
-      email: defaultPersonaUsers.GATE_POST_OFFICER.email,
-      dept: 'Facility Gate Post & Yard Control',
+      role: 'LOGISTICS_GATE_POST' as UserRole,
+      title: 'Logistics & Gate Post',
+      name: defaultPersonaUsers.LOGISTICS_GATE_POST.full_name,
+      email: defaultPersonaUsers.LOGISTICS_GATE_POST.email,
+      dept: 'Inbound Logistics, Facility Gate & Docks',
       icon: Radio,
-      color: 'bg-teal-600',
-      badge: 'Gate & Yard Master',
-      desc: 'Gate verification, parking/dock allocation, and live operational map control.',
+      color: 'bg-sky-600',
+      badge: 'Logistics & Gate',
+      desc: 'Highway corridor monitoring, gate check-in, parking/dock allocation & telematics.',
     },
     {
       role: 'RECEIVING_QC' as UserRole,
-      title: 'Receiving & QC Lead',
+      title: 'Receiving + QC Lead',
       name: defaultPersonaUsers.RECEIVING_QC.full_name,
       email: defaultPersonaUsers.RECEIVING_QC.email,
       dept: 'Dock Receiving & Quality Assurance',
       icon: ShieldCheck,
       color: 'bg-purple-600',
       badge: 'GRN & QC Intake',
-      desc: 'Dockside unloading, 100% manual GRN intake, and 5-pillar Quality Checks.',
+      desc: 'Complete unloading, NLP/manual GRN intake, and 5-pillar Quality Checks.',
     },
     {
       role: 'FINANCE' as UserRole,
@@ -128,6 +117,17 @@ export const Auth: React.FC = () => {
       color: 'bg-emerald-600',
       badge: '3-Way Match & Pay',
       desc: 'Invoice AI OCR, PO+GRN+Invoice 3-way match, payment holds, and settlement.',
+    },
+    {
+      role: 'SYSTEM_ADMIN' as UserRole,
+      title: 'System Administrator',
+      name: defaultPersonaUsers.SYSTEM_ADMIN.full_name,
+      email: defaultPersonaUsers.SYSTEM_ADMIN.email,
+      dept: 'Technical Architecture & Security',
+      icon: Layers,
+      color: 'bg-slate-700',
+      badge: 'System Admin',
+      desc: 'Technical infrastructure, audit logging, emergency overrides and system health.',
     },
   ];
 
@@ -240,10 +240,10 @@ export const Auth: React.FC = () => {
           </div>
           <div>
             <div className="text-sm font-black tracking-wider text-white">
-              C2 CONTROL TOWER
+              SUPPLY SYNC
             </div>
             <div className="text-[10px] text-slate-400 font-medium">
-              Enterprise Supply Chain Mission Control
+              Autonomous Supply Chain Intelligence & Control
             </div>
           </div>
         </div>
@@ -268,7 +268,7 @@ export const Auth: React.FC = () => {
             Supply Chain Operations Hub
           </h1>
           <p className="text-sm text-slate-400 mt-2 leading-relaxed">
-            Welcome to the C2 Supply Chain Portal. Select a verified operational persona for instant 1-click access, or sign in with your corporate credentials.
+            Welcome to the Supply Sync Portal. Select a verified operational persona for instant 1-click access, or sign in with your corporate credentials.
           </p>
         </div>
 
@@ -420,7 +420,7 @@ export const Auth: React.FC = () => {
                   <input
                     type="email"
                     required
-                    placeholder="user@c2tower.com"
+                    placeholder="user@supplysync.io"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
@@ -463,14 +463,14 @@ export const Auth: React.FC = () => {
                       onChange={(e) => setRole(e.target.value as UserRole)}
                       className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
                     >
-                      <option value="SYSTEM_ADMIN">System Administrator (Admin Only)</option>
-                      <option value="PROCUREMENT_MANAGER">Procurement Manager (PR & POs)</option>
-                      <option value="LOGISTICS_MANAGER">Logistics Manager (Shipments & Fleet Telematics)</option>
-                      <option value="WAREHOUSE_MANAGER">Warehouse Manager (Dock & Yard Scheduling)</option>
-                      <option value="GATE_OPERATOR">Gate Operator (Check-In & Truck Verification)</option>
-                      <option value="RECEIVING_QC_OPERATOR">Receiving & QC Inspector (GRN & Quality Check)</option>
-                      <option value="FINANCE_MANAGER">Finance Controller (3-Way Match & Payments)</option>
-                      <option value="SUPPLIER">Supplier Portal (External Partner)</option>
+                      <option value="WORKER">1. Worker (Shop Floor Requisitions)</option>
+                      <option value="PROCUREMENT_OFFICER">2. Procurement Officer (PR Approval & AI POs)</option>
+                      <option value="SUPPLIER">3. Supplier (PO Response & Shipments)</option>
+                      <option value="TRUCK_DRIVER">4. Truck Driver (Highway GPS & Trips)</option>
+                      <option value="LOGISTICS_GATE_POST">5. Logistics & Gate Post (Gate, Yard & Docks)</option>
+                      <option value="RECEIVING_QC">6. Receiving + QC (GRN Intake & Quality Check)</option>
+                      <option value="FINANCE">7. Finance (3-Way Match & Settlements)</option>
+                      <option value="SYSTEM_ADMIN">8. System Administrator (Technical Admin)</option>
                     </select>
                   </div>
 
@@ -508,14 +508,14 @@ export const Auth: React.FC = () => {
                 disabled={loading}
                 className="w-full mt-2 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                <span>{loading ? 'Authenticating...' : isSignUp ? 'Create User Profile' : 'Sign In to Control Tower'}</span>
+                <span>{loading ? 'Authenticating...' : isSignUp ? 'Create User Profile' : 'Sign In to Supply Sync'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
               {!isSignUp && (
                 <div className="text-center pt-2">
                   <span className="text-[11px] text-slate-400">
-                    Test credentials: <code className="text-blue-400">admin@c2tower.com</code> / <code className="text-blue-400">admin123</code>
+                    Test credentials: <code className="text-blue-400">admin@supplysync.io</code> / <code className="text-blue-400">admin123</code>
                   </span>
                 </div>
               )}
@@ -622,13 +622,13 @@ export const Auth: React.FC = () => {
 
       {/* Footer Status Bar */}
       <footer className="h-12 border-t border-slate-800/80 px-6 sm:px-12 flex items-center justify-between text-[11px] text-slate-500 bg-[#0B1120]">
-        <span>© 2026 C2 Supply Chain Intelligence Control Tower</span>
+        <span>© 2026 Supply Sync — Autonomous Supply Chain Intelligence Platform</span>
         <div className="flex items-center gap-4">
           <span>PostgreSQL v16</span>
           <span>•</span>
           <span>Tailwind v4</span>
           <span>•</span>
-          <span>v2.4 Pro</span>
+          <span>Supply Sync v4.0</span>
         </div>
       </footer>
     </div>

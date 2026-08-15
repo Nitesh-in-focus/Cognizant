@@ -30,6 +30,7 @@ const ROLE_SEARCH_SCOPES: Record<UserRole, string[]> = {
   WORKER: ['purchase_requisitions'],
   PROCUREMENT_OFFICER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions', 'quality_checks'],
   PROCUREMENT_MANAGER: ['purchase_orders', 'purchase_requisitions', 'suppliers', 'exceptions', 'quality_checks'],
+  LOGISTICS_GATE_POST: ['shipments', 'trucks', 'purchase_orders'],
   LOGISTICS: ['shipments', 'trucks', 'purchase_orders'],
   LOGISTICS_MANAGER: ['shipments', 'trucks', 'purchase_orders'],
   GATE_POST_OFFICER: ['shipments', 'trucks'],
@@ -72,6 +73,12 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
     { label: 'Purchase Requisitions', path: '/purchase-requisitions', color: 'text-amber-600' },
     { label: 'Purchase Orders', path: '/purchase-orders', color: 'text-blue-600' },
     { label: 'Suppliers Directory', path: '/suppliers', color: 'text-emerald-600' },
+  ],
+  LOGISTICS_GATE_POST: [
+    { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },
+    { label: 'Gate & Yard Docks', path: '/yard', color: 'text-emerald-600' },
+    { label: 'Fleet & Telematics', path: '/trucks', color: 'text-indigo-600' },
+    { label: 'Traceability Matrix', path: '/traceability', color: 'text-purple-600' },
   ],
   LOGISTICS: [
     { label: 'Live GPS Fleet', path: '/shipments', color: 'text-blue-600' },

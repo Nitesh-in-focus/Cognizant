@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FileText,
   Plus,
@@ -16,6 +17,9 @@ import {
   Layers,
   User,
   History,
+  ArrowRight,
+  ExternalLink,
+  ShoppingCart,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -25,6 +29,8 @@ import { parseNlpPurchaseRequisition, NlpPrExtractedFields } from '../services/a
 import { getAiSupplierRecommendation } from '../services/ai/supplierRecommendationService';
 
 export const PurchaseRequisitions: React.FC = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { currentUser, role, refreshKey, triggerRefresh, showSnackbar, canApprovePR, canCreatePR, logAuditAction, logStatusHistory, addAlert } = useApp();
 
   const [prs, setPrs] = useState<any[]>([]);
@@ -33,8 +39,15 @@ export const PurchaseRequisitions: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'MY_PRS' | 'APPROVED' | 'REJECTED'>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('pr') || '');
   const [filterPriority, setFilterPriority] = useState('ALL');
+
+  useEffect(() => {
+    const prParam = searchParams.get('pr');
+    if (prParam) {
+      setSearchQuery(prParam);
+    }
+  }, [searchParams]);
 
   // PR Creation Modal (AI-First NLP & Manual Fallback - Section 11 of updates3.md)
   const [openCreate, setOpenCreate] = useState(false);
@@ -77,7 +90,8 @@ export const PurchaseRequisitions: React.FC = () => {
             pr_items(
               *,
               products(product_name, unit_price, unit_of_measure)
-            )
+            ),
+            purchase_orders(po_id, po_number, status, total_amount, suppliers(supplier_name))
           `)
           .order('created_at', { ascending: false }),
         supabase.from('products').select('*'),
@@ -569,6 +583,21 @@ export const PurchaseRequisitions: React.FC = () => {
 
                       <td className="py-3.5 px-4">
                         <StatusBadge status={pr.status} />
+                        {(() => {
+                          const linkedPo = Array.isArray(pr.purchase_orders) ? pr.purchase_orders[0] : pr.purchase_orders;
+                          if (!linkedPo) return null;
+                          return (
+                            <button
+                              onClick={() => navigate(`/purchase-orders?po=${linkedPo.po_number || linkedPo.po_id}`)}
+                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-[10px] font-bold transition-colors cursor-pointer"
+                              title="Jump to Linked Purchase Order"
+                            >
+                              <ShoppingCart className="w-2.5 h-2.5" />
+                              <span>Linked {linkedPo.po_number || 'PO'}</span>
+                              <ArrowRight className="w-2.5 h-2.5" />
+                            </button>
+                          );
+                        })()}
                       </td>
 
                       {activeTab === 'REJECTED' && (
@@ -727,11 +756,33 @@ export const PurchaseRequisitions: React.FC = () => {
             <div className="text-xs font-extrabold text-slate-900 flex items-center justify-between border-b border-slate-200 pb-2">
               <span>Structured PR Parameters (Review & Edit)</span>
               {extractedDraft && (
-                <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-bold border border-emerald-200">
-                  AI Parsed • {extractedDraft.confidence}% Confidence
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full font-bold border border-blue-200">
+                    Extracted Date: {extractedDraft.date_source_text} ➔ {extractedDraft.required_date}
+                  </span>
+                  <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-bold border border-emerald-200">
+                    AI Parsed • {extractedDraft.confidence}% Confidence
+                  </span>
+                </div>
               )}
             </div>
+
+            {/* Priority Reason Alert (Section 33 of updates5.md) */}
+            {extractedDraft?.priority_reason && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Priority ({extractedDraft.priority}):</strong> {extractedDraft.priority_reason}
+                </span>
+              </div>
+            )}
+
+            {/* Missing Fields Warning (Section 34 of updates5.md) */}
+            {extractedDraft?.missing_fields && extractedDraft.missing_fields.length > 0 && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs">
+                <strong>Attention:</strong> Some fields ({extractedDraft.missing_fields.join(', ')}) could not be extracted with high confidence. Please verify before submitting.
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
