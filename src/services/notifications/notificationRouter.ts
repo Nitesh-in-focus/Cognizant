@@ -1,15 +1,26 @@
 import { sendEmailWithLog } from './emailService';
+import { sendTransactionalEmail } from '../emailService';
 import { defaultPersonaUsers } from '../../contexts/AppContext';
 
 export type AlertEventType =
+  | 'PR_APPROVED'
   | 'PR_REJECTED'
+  | 'PO_APPROVED'
   | 'PO_REJECTED'
+  | 'PO_SENT_TO_SUPPLIER'
+  | 'PO_ACCEPTED_BY_SUPPLIER'
   | 'PO_REJECTED_BY_SUPPLIER'
+  | 'DRIVER_REQUEST_BROADCAST'
+  | 'DRIVER_ASSIGNMENT_ACCEPTED'
   | 'DRIVER_ASSIGNMENT_REJECTED'
+  | 'SHIPMENT_DISPATCHED'
   | 'SHIPMENT_DELAY'
   | 'TRUCK_ARRIVAL'
+  | 'QUALITY_COMPLETED'
   | 'QUALITY_FAILURE'
+  | 'INVOICE_SUBMITTED'
   | 'INVOICE_MISMATCH'
+  | 'PAYMENT_APPROVED'
   | 'PAYMENT_RELEASED'
   | 'PAYMENT_EXCEPTION'
   | 'DOCK_CONGESTION'
@@ -132,10 +143,20 @@ export async function routeNotification(payload: RouteNotificationPayload): Prom
       break;
   }
 
-  // 1. Dispatch Email Engine
+  // 1. Dispatch Email Engine & Transactional Delivery Logging (Section 37 of updates7.md)
   await Promise.all(
-    recipients.map((rec) =>
-      sendEmailWithLog({
+    recipients.map(async (rec) => {
+      await sendTransactionalEmail({
+        eventType: payload.event_type,
+        recipientEmail: rec.email,
+        recipientRole: rec.role,
+        subject: `[Supply Sync ${severity}] ${payload.title}`,
+        bodyText: `${payload.title}\n\n${payload.message}\n\nRelated Entity: ${payload.entity_type || ''} ${payload.entity_number || ''}`,
+        relatedEntityType: payload.entity_type,
+        relatedEntityId: payload.entity_number,
+      });
+
+      return sendEmailWithLog({
         recipient_email: rec.email,
         recipient_role: rec.role,
         subject: `[Supply Sync ${severity}] ${payload.title}`,
@@ -146,8 +167,8 @@ export async function routeNotification(payload: RouteNotificationPayload): Prom
           entity_type: payload.entity_type,
           entity_number: payload.entity_number,
         },
-      })
-    )
+      });
+    })
   );
 
   // 2. WhatsApp API Integration Check (Section 25 of updates4.md)

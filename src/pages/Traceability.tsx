@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   GitFork,
   Search,
@@ -10,6 +11,7 @@ import {
   CreditCard,
   AlertTriangle,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   Building2,
   ExternalLink,
@@ -24,6 +26,7 @@ import {
   DoorOpen,
   Scale,
   ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -33,11 +36,14 @@ import { Modal } from '../components/common/Modal';
 import { TruckTrackingMap } from '../components/maps/TruckTrackingMap';
 
 export const Traceability: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar } = useApp();
+  const navigate = useNavigate();
+  const { currentUser, role, refreshKey, triggerRefresh, showSnackbar } = useApp();
+  const isAuthorized = role === 'PROCUREMENT_OFFICER' || role === 'SYSTEM_ADMIN' || role === 'ADMIN';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [traceChains, setTraceChains] = useState<any[]>([]);
+  const [expandedPoIds, setExpandedPoIds] = useState<Record<string, boolean>>({});
   const [selectedNode, setSelectedNode] = useState<{ type: string; title: string; data: any; tab: 'overview' | 'raw' }>({
     type: '',
     title: '',
@@ -49,8 +55,10 @@ export const Traceability: React.FC = () => {
   const [trackingModalShipment, setTrackingModalShipment] = useState<any | null>(null);
 
   useEffect(() => {
-    fetchTraceabilityData();
-  }, [refreshKey]);
+    if (isAuthorized) {
+      fetchTraceabilityData();
+    }
+  }, [refreshKey, isAuthorized]);
 
   const fetchTraceabilityData = async () => {
     try {
@@ -95,12 +103,43 @@ export const Traceability: React.FC = () => {
 
       if (error) throw error;
       setTraceChains(pos || []);
+      // Expand first PO by default if exists
+      if (pos && pos.length > 0) {
+        setExpandedPoIds({ [pos[0].po_id]: true });
+      }
     } catch (err) {
       console.error('Error fetching traceability chain:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  const toggleExpand = (poId: string) => {
+    setExpandedPoIds((prev) => ({
+      ...prev,
+      [poId]: !prev[poId],
+    }));
+  };
+
+  if (!isAuthorized) {
+    return (
+      <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-xs max-w-2xl mx-auto my-12 space-y-4">
+        <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 mx-auto border border-amber-200 shadow-xs">
+          <Lock className="w-7 h-7" />
+        </div>
+        <h2 className="text-lg font-extrabold text-slate-900">Traceability Matrix Access Restricted</h2>
+        <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+          The Enterprise Visual Traceability Matrix contains complete multi-vendor supply chain audit paths and is restricted strictly to PR Officers and Technical Administrators (Section 13 of Updates 9).
+        </p>
+        <button
+          onClick={() => navigate('/')}
+          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+        >
+          <span>Return to Role Dashboard</span>
+        </button>
+      </div>
+    );
+  }
 
   const filteredChains = traceChains.filter((chain) => {
     const q = searchQuery.toLowerCase();
@@ -109,8 +148,8 @@ export const Traceability: React.FC = () => {
       chain.po_number?.toLowerCase().includes(q) ||
       chain.suppliers?.supplier_name?.toLowerCase().includes(q) ||
       chain.purchase_requisitions?.pr_number?.toLowerCase().includes(q) ||
-      chain.shipments?.[0]?.shipment_number?.toLowerCase().includes(q) ||
-      chain.invoices?.[0]?.invoice_number?.toLowerCase().includes(q)
+      chain.shipments?.some((s: any) => s.shipment_number?.toLowerCase().includes(q)) ||
+      chain.invoices?.some((inv: any) => inv.invoice_number?.toLowerCase().includes(q))
     );
   });
 
@@ -121,10 +160,10 @@ export const Traceability: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <GitFork className="w-5 h-5 text-blue-600" />
-            End-to-End Visual Traceability Matrix
+            End-to-End Enterprise Traceability Matrix
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Full 15-stage dynamic audit chain: PR ➔ PO ➔ Supplier ➔ Shipment ➔ ASN ➔ Truck ➔ Driver ➔ Gate Entry ➔ Dock/Yard ➔ GRN ➔ Quality Check ➔ Invoice ➔ 3-Way Match ➔ Exception ➔ Payment.
+            Grouped by Purchase Order: PR ➔ PO ➔ Supplier ➔ Shipments (1..N) ➔ Driver ➔ Gate ➔ Dock ➔ GRN ➔ 8-Factor QC ➔ Invoice ➔ 3-Way Match ➔ Payment.
           </p>
         </div>
 
@@ -153,324 +192,265 @@ export const Traceability: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className="py-12 text-center text-xs text-slate-400">Loading Traceability Chains from Supabase...</div>
+        <div className="py-12 text-center text-xs text-slate-400">Loading Traceability Matrix from Supabase...</div>
       ) : filteredChains.length === 0 ? (
-        <div className="p-8 rounded-xl border border-slate-200 bg-white text-center shadow-xs">
-          <p className="text-xs text-slate-500">
-            No transaction chains found matching criteria.
-          </p>
+        <div className="p-16 rounded-2xl border border-slate-200 bg-white text-center shadow-xs">
+          <Layers className="w-10 h-10 text-slate-300 mx-auto mb-2 opacity-75" />
+          <span className="font-bold text-slate-700 block text-sm">No Active Purchase Order Traceability Chains</span>
+          <span className="text-xs text-slate-500 mt-1 block max-w-md mx-auto">
+            Approve a Purchase Requisition and assign a vendor to generate the canonical PO traceability root.
+          </span>
+          <button
+            onClick={() => navigate('/purchase-requisitions')}
+            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+          >
+            <span>Go to Purchase Requisitions</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       ) : (
-        <div className="space-y-6">
-          {filteredChains.map((chain, index) => {
-            const pr = chain.purchase_requisitions;
-            const shp = chain.shipments?.[0];
-            const grn = chain.goods_receipts?.[0];
-            const inv = chain.invoices?.[0];
-            const pay = inv?.payments?.[0];
-            const exc = chain.exceptions?.[0];
+        <div className="space-y-4">
+          {filteredChains.map((poChain) => {
+            const pr = poChain.purchase_requisitions;
+            const supplier = poChain.suppliers;
+            const shipments = poChain.shipments || [];
+            const grns = poChain.goods_receipts || [];
+            const invoices = poChain.invoices || [];
+            const payments = invoices.flatMap((inv: any) => inv.payments || []);
+            const exceptions = poChain.exceptions || [];
 
-            // 15 Dynamic Stages with Strict Coherent Statuses (Sections 20-22, 37-38 of updates5.md)
-            const prStatus = pr ? (pr.status === 'APPROVED' || pr.status === 'CONVERTED' ? 'COMPLETED' : pr.status === 'REJECTED' ? 'REJECTED' : 'IN_PROGRESS') : 'NOT_STARTED';
-            const poStatus = chain.status === 'SUPPLIER_REJECTED' || chain.status === 'REJECTED' ? 'REJECTED' : (chain.status === 'ACCEPTED_BY_SUPPLIER' || chain.status === 'CONFIRMED' || chain.status === 'DISPATCHED' || chain.status === 'RECEIVED') ? 'COMPLETED' : 'IN_PROGRESS';
-            const supplierStatus = chain.status === 'SUPPLIER_REJECTED' ? 'REJECTED' : (chain.status === 'ACCEPTED_BY_SUPPLIER' || chain.status === 'CONFIRMED' || shp) ? 'COMPLETED' : 'PENDING';
-            const shipmentStatus = !shp ? (chain.status === 'ACCEPTED_BY_SUPPLIER' ? 'PENDING' : 'NOT_STARTED') : (shp.status === 'RECEIVED' || shp.status === 'UNLOADED' || shp.status === 'DELIVERED' ? 'COMPLETED' : shp.status === 'DISPATCHED' || shp.status === 'IN_TRANSIT' ? 'ACTIVE' : 'IN_PROGRESS');
-            const asnStatus = shp?.asn_number ? 'COMPLETED' : shp ? 'IN_PROGRESS' : 'NOT_STARTED';
-            const truckStatus = shp?.driver_status === 'ACCEPTED' || shp?.driver_id ? (shp?.status === 'RECEIVED' || shp?.status === 'UNLOADED' ? 'COMPLETED' : 'ACTIVE') : shp ? 'PENDING' : 'NOT_STARTED';
-            const driverStatus = shp?.driver_status === 'ACCEPTED' ? (shp?.status === 'RECEIVED' || shp?.status === 'UNLOADED' ? 'COMPLETED' : 'ACTIVE') : shp?.status === 'DRIVER_REQUESTED' ? 'IN_PROGRESS' : 'PENDING';
-            const gateStatus = grn || shp?.status === 'AT_GATE' || shp?.status === 'IN_YARD' || shp?.status === 'AT_DOCK' || shp?.status === 'UNLOADED' ? 'COMPLETED' : shp?.status === 'IN_TRANSIT' ? 'PENDING' : 'NOT_STARTED';
-            const dockStatus = grn || shp?.status === 'AT_DOCK' || shp?.status === 'UNLOADED' ? 'COMPLETED' : shp?.status === 'IN_YARD' ? 'IN_PROGRESS' : 'NOT_STARTED';
-            const grnStatus = grn ? (grn.status === 'COMPLETED' || grn.status === 'INSPECTED' ? 'COMPLETED' : 'IN_PROGRESS') : 'NOT_STARTED';
-            const qcStatus = grn ? (grn.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS') : 'NOT_STARTED';
-            const invoiceStatus = inv ? (inv.payment_status === 'PAID' ? 'COMPLETED' : 'ACTIVE') : 'NOT_STARTED';
-            const matchStatus = !inv ? 'NOT_STARTED' : inv.match_status === 'MATCHED' ? 'COMPLETED' : inv.match_status === 'MISMATCH' ? 'FAILED' : 'PENDING';
-            const exceptionStatus = exc ? (exc.status === 'RESOLVED' ? 'COMPLETED' : exc.status === 'OPEN' ? 'ON_HOLD' : 'IN_PROGRESS') : (inv?.match_status === 'MATCHED' ? 'COMPLETED' : 'NOT_STARTED');
-            const paymentStatus = pay ? (pay.status === 'COMPLETED' ? 'COMPLETED' : pay.status === 'FAILED' ? 'FAILED' : 'IN_PROGRESS') : exc?.status === 'OPEN' ? 'ON_HOLD' : (inv?.match_status === 'MATCHED' ? 'PENDING' : 'NOT_STARTED');
+            const isExpanded = Boolean(expandedPoIds[poChain.po_id]);
 
-            const stages = [
-              {
-                id: 'pr',
-                num: 1,
-                label: 'PR',
-                title: 'Purchase Requisition',
-                code: pr?.pr_number || 'PR-2026-001',
-                active: Boolean(pr),
-                status: prStatus,
-                icon: FileText,
-                color: prStatus === 'COMPLETED' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : prStatus === 'REJECTED' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-amber-700 bg-amber-50 border-amber-200',
-                data: pr,
-              },
-              {
-                id: 'po',
-                num: 2,
-                label: 'PO',
-                title: 'Purchase Order',
-                code: chain.po_number,
-                active: Boolean(chain.po_number),
-                status: poStatus,
-                icon: ShoppingCart,
-                color: poStatus === 'COMPLETED' ? 'text-blue-700 bg-blue-50 border-blue-200' : poStatus === 'REJECTED' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-amber-700 bg-amber-50 border-amber-200',
-                data: chain,
-              },
-              {
-                id: 'supplier',
-                num: 3,
-                label: 'SUPPLIER',
-                title: 'Supplier Partner',
-                code: chain.suppliers?.supplier_name || 'Tata Industrial',
-                active: Boolean(chain.suppliers),
-                status: supplierStatus,
-                icon: Building2,
-                color: supplierStatus === 'REJECTED' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-indigo-700 bg-indigo-50 border-indigo-200',
-                data: chain.suppliers,
-              },
-              {
-                id: 'shipment',
-                num: 4,
-                label: 'SHIPMENT',
-                title: 'Shipment Dispatch',
-                code: shp?.shipment_number || 'SHP-2026-9901',
-                active: Boolean(shp),
-                status: shipmentStatus,
-                icon: Truck,
-                color: shipmentStatus === 'COMPLETED' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-blue-700 bg-blue-50 border-blue-200',
-                data: shp,
-              },
-              {
-                id: 'asn',
-                num: 5,
-                label: 'ASN',
-                title: 'Advance Ship Notice',
-                code: shp?.asn_number || 'ASN-2026-042',
-                active: Boolean(shp?.asn_number || shp),
-                status: asnStatus,
-                icon: Package,
-                color: 'text-cyan-700 bg-cyan-50 border-cyan-200',
-                data: { asn_number: shp?.asn_number || 'ASN-2026-042', shipment: shp },
-              },
-              {
-                id: 'truck',
-                num: 6,
-                label: 'TRUCK',
-                title: 'Commercial Carrier',
-                code: shp?.vehicle_number || 'MH-12-AB-9901',
-                active: Boolean(shp),
-                status: truckStatus,
-                icon: Truck,
-                color: 'text-blue-700 bg-blue-50 border-blue-200',
-                data: { vehicle_number: shp?.vehicle_number || 'MH-12-AB-9901', type: 'Tata Signa Heavy 10-Ton' },
-              },
-              {
-                id: 'driver',
-                num: 7,
-                label: 'DRIVER',
-                title: 'Assigned Driver',
-                code: shp?.driver_name || 'Rajesh Sharma (DRV-2026-1025)',
-                active: Boolean(shp),
-                status: driverStatus,
-                icon: UserCheck,
-                color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-                data: { driver_name: shp?.driver_name || 'Rajesh Sharma', driver_code: shp?.driver_code || 'DRV-2026-1025', phone: '+91 98234 56789' },
-              },
-              {
-                id: 'gate',
-                num: 8,
-                label: 'GATE ENTRY',
-                title: 'Gate Security Check-In',
-                code: 'GATE-01 (Verified)',
-                active: Boolean(grn || shp?.status === 'DELIVERED'),
-                status: gateStatus,
-                icon: ShieldCheck,
-                color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-                data: { gate: 'North Inbound Gate 01', gate_operator: 'Prakash Rao' },
-              },
-              {
-                id: 'dock',
-                num: 9,
-                label: 'DOCK/YARD',
-                title: 'Dock Bay Allocation',
-                code: 'DOCK D-01 (Inbound)',
-                active: Boolean(grn),
-                status: dockStatus,
-                icon: DoorOpen,
-                color: 'text-indigo-700 bg-indigo-50 border-indigo-200',
-                data: { dock_number: 'DOCK D-01', yard: 'North Inbound Yard' },
-              },
-              {
-                id: 'grn',
-                num: 10,
-                label: 'GRN',
-                title: 'Goods Receipt Note',
-                code: grn?.grn_number || 'GRN-2026-001',
-                active: Boolean(grn),
-                status: grnStatus,
-                icon: ClipboardCheck,
-                color: 'text-purple-700 bg-purple-50 border-purple-200',
-                data: grn,
-              },
-              {
-                id: 'qc',
-                num: 11,
-                label: 'QUALITY CHECK',
-                title: 'QC Inspection',
-                code: 'QC-Pass (Score: 94/100)',
-                active: Boolean(grn),
-                status: qcStatus,
-                icon: CheckCircle2,
-                color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-                data: { qc_score: 94, inspector: 'Ananya Iyer', status: 'PASSED' },
-              },
-              {
-                id: 'invoice',
-                num: 12,
-                label: 'INVOICE',
-                title: 'Vendor Invoice & OCR',
-                code: inv?.invoice_number || 'INV-2026-7891',
-                active: Boolean(inv),
-                status: invoiceStatus,
-                icon: Receipt,
-                color: 'text-blue-700 bg-blue-50 border-blue-200',
-                data: inv,
-              },
-              {
-                id: 'match',
-                num: 13,
-                label: '3-WAY MATCH',
-                title: 'Reconciliation Engine',
-                code: inv?.match_status || 'MATCHED',
-                active: Boolean(inv),
-                status: matchStatus,
-                icon: Scale,
-                color: matchStatus === 'FAILED' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200',
-                data: { po: chain.po_number, grn: grn?.grn_number, invoice: inv?.invoice_number, variance: 0 },
-              },
-              {
-                id: 'exception',
-                num: 14,
-                label: 'EXCEPTION',
-                title: 'Exception & Hold',
-                code: exc && exc.status === 'OPEN' ? `Variance: ${exc.exception_type}` : 'No Discrepancies',
-                active: Boolean(exc && exc.status === 'OPEN'),
-                status: exceptionStatus,
-                icon: AlertTriangle,
-                color: exceptionStatus === 'ON_HOLD' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-slate-600 bg-slate-50 border-slate-200',
-                data: exc,
-              },
-              {
-                id: 'payment',
-                num: 15,
-                label: 'PAYMENT',
-                title: 'Payment Settlement',
-                code: pay?.transaction_reference || (pay?.status === 'COMPLETED' ? 'Settled (NEFT)' : 'Scheduled'),
-                active: Boolean(pay),
-                status: paymentStatus,
-                icon: CreditCard,
-                color: paymentStatus === 'COMPLETED' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-700 bg-slate-50 border-slate-200',
-                data: pay,
-              },
-            ];
+            // Top level statuses
+            const poStatusText = poChain.status === 'ACCEPTED_BY_SUPPLIER' ? 'COMPLETED' : poChain.status === 'REJECTED' ? 'REJECTED' : 'IN PROGRESS';
+            const grnStatusText = grns.length > 0 ? 'COMPLETED' : shipments.some((s: any) => s.status === 'DELIVERED' || s.status === 'RECEIVED') ? 'IN PROGRESS' : 'PENDING';
+            const invStatusText = invoices.length > 0 ? (invoices[0].match_status === 'MATCHED' ? 'COMPLETED' : 'IN PROGRESS') : 'PENDING';
+            const payStatusText = payments.some((p: any) => p.status === 'COMPLETED') ? 'COMPLETED' : exceptions.length > 0 ? 'ON HOLD' : 'PENDING';
 
             return (
               <div
-                key={chain.po_id || index}
-                className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs transition-all hover:border-slate-300"
+                key={poChain.po_id}
+                className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs transition-all"
               >
-                {/* Chain Overview Bar */}
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-bold text-blue-600">
-                      Pipeline #{chain.po_number}
-                    </span>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                      {chain.suppliers?.supplier_name || 'Tata Industrial Solutions Ltd'}
-                    </span>
-                    <span className="text-xs font-bold text-slate-900">
-                      ₹{Number(chain.total_amount || 0).toLocaleString()}
-                    </span>
+                {/* Top-Level Single PO Header Row (Sections 14-15 of updates9.md) */}
+                <div
+                  onClick={() => toggleExpand(poChain.po_id)}
+                  className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-200 text-blue-700 flex items-center justify-center font-black shrink-0">
+                      <ShoppingCart className="w-5 h-5" />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-base text-slate-900 tracking-tight">
+                          {poChain.po_number}
+                        </span>
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                          Total: ₹{Number(poChain.total_amount || 0).toLocaleString()}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {shipments.length} {shipments.length === 1 ? 'Shipment' : 'Shipments'}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-3">
+                        <span>PR: <strong className="text-slate-800">{pr?.pr_number || 'PR-2026-001'}</strong></span>
+                        <span>•</span>
+                        <span>Vendor: <strong className="text-slate-800">{supplier?.supplier_name || 'Tata Industrial'}</strong></span>
+                        <span>•</span>
+                        <span>Ordered: <strong className="text-slate-800">{poChain.po_items?.[0]?.ordered_quantity || 100} units</strong></span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {exc && exc.status === 'OPEN' ? (
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        <span>3-Way Exception: {exc.exception_type}</span>
-                      </span>
-                    ) : pay?.status === 'COMPLETED' ? (
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Fully Settled via NEFT</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
-                        <span>Inbound Fulfillment Active</span>
-                      </span>
-                    )}
+                  {/* Stage Status Badges Strip */}
+                  <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                      PR: {pr?.status === 'APPROVED' ? 'COMPLETED' : 'IN PROGRESS'}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 font-bold border border-blue-200">
+                      PO: {poStatusText}
+                    </span>
+                    <span className={`px-2.5 py-1 rounded-lg font-bold border ${
+                      shipments.length > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      Shipments: {shipments.length > 0 ? `${shipments.length} Active` : 'PENDING'}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                      GRN/QC: {grnStatusText}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                      Match: {invStatusText}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                      Payment: {payStatusText}
+                    </span>
 
-                    <button
-                      onClick={() =>
-                        setSelectedNode({
-                          type: 'PO_CHAIN',
-                          title: `Transaction Chain Audit Trail: ${chain.po_number}`,
-                          data: chain,
-                          tab: 'overview',
-                        })
-                      }
-                      className="text-xs font-semibold text-slate-600 hover:text-blue-600 px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
-                    >
-                      Audit Details
-                    </button>
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 shrink-0 ml-2">
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </div>
                   </div>
                 </div>
 
-                {/* 15-Stage Full Dynamic Relational Chain */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none">
-                  {stages.map((stage, sIdx) => {
-                    const Icon = stage.icon;
-                    return (
-                      <React.Fragment key={stage.id}>
-                        <div
-                          onClick={() => {
-                            if (stage.id === 'shipment' && shp) {
-                              setTrackingModalShipment(shp);
-                            } else {
-                              setSelectedNode({
-                                type: stage.id.toUpperCase(),
-                                title: `${stage.title}: ${stage.code}`,
-                                data: stage.data,
-                                tab: 'overview',
-                              });
-                            }
-                          }}
-                          className={`shrink-0 w-32 p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-md hover:scale-105 ${stage.color} flex flex-col justify-between`}
-                          title={`Stage ${stage.num}: ${stage.title} (Click for audit inspection)`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between text-[10px] font-black uppercase mb-1">
-                              <span className="flex items-center gap-1">
-                                <Icon className="w-3 h-3" />
-                                <span>{stage.num}. {stage.label}</span>
-                              </span>
-                            </div>
-                            <div className="font-bold text-[11px] text-slate-900 truncate">
-                              {stage.code}
-                            </div>
-                          </div>
-                          <div className="mt-2 pt-1 border-t border-slate-200/60 flex items-center justify-between text-[9px]">
-                            <span className="font-semibold text-slate-600 truncate">{stage.status}</span>
-                            <ChevronRight className="w-2.5 h-2.5 text-slate-400" />
-                          </div>
+                {/* Expanded Multi-Shipment & Detailed Workflow Hierarchy */}
+                {isExpanded && (
+                  <div className="border-t border-slate-100 bg-slate-50/50 p-5 space-y-5 text-xs">
+                    {/* 1. PR & Supplier Details */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span>Originating Purchase Requisition</span>
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                            {pr?.pr_number}
+                          </span>
                         </div>
+                        <div className="text-slate-600 text-[11px] space-y-0.5">
+                          <div>Product: <strong>{pr?.pr_items?.[0]?.products?.product_name || 'Component SKU'}</strong></div>
+                          <div>Warehouse DC: <strong>{poChain.warehouses?.warehouse_name || 'Pune Central DC'}</strong></div>
+                          <div>Priority: <strong className="text-amber-700">{pr?.priority || 'HIGH'}</strong></div>
+                        </div>
+                      </div>
 
-                        {sIdx < stages.length - 1 && (
-                          <div className="shrink-0 text-slate-300">
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </div>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </div>
+                      <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <Building2 className="w-4 h-4 text-indigo-600" />
+                            <span>Supplier Partner & Terms</span>
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                            {supplier?.supplier_code || 'SUP-1003'}
+                          </span>
+                        </div>
+                        <div className="text-slate-600 text-[11px] space-y-0.5">
+                          <div>Vendor: <strong>{supplier?.supplier_name}</strong></div>
+                          <div>Contact: <strong>{supplier?.email} • {supplier?.city}</strong></div>
+                          <div>Status: <strong className="text-emerald-600">{poChain.status || 'ACCEPTED'}</strong></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Multiple Shipments Under this PO (Section 14 & 15 of updates9.md) */}
+                    <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <Truck className="w-4 h-4 text-blue-600" />
+                          <span>Shipments Under Purchase Order ({shipments.length})</span>
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Split fulfillment tracking with driver & telematics waypoints
+                        </span>
+                      </div>
+
+                      {shipments.length === 0 ? (
+                        <div className="p-4 text-center text-slate-400 text-xs bg-slate-50 rounded-lg">
+                          No shipments created by the supplier for this PO yet.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {shipments.map((shp: any, shpIdx: number) => (
+                            <div
+                              key={shp.shipment_id || shpIdx}
+                              className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2 hover:bg-white transition-all shadow-xs"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-bold text-slate-900 text-xs">
+                                    {shp.shipment_number}
+                                  </span>
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    {shp.total_quantity} units
+                                  </span>
+                                </div>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  shp.status === 'RECEIVED' || shp.status === 'DELIVERED'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                                }`}>
+                                  {shp.status || 'IN_TRANSIT'}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 pt-1">
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">ROUTE</span>
+                                  <strong className="text-slate-800 truncate block">{shp.origin || 'Mumbai'} ➔ {shp.destination || 'Pune'}</strong>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block text-[10px]">DRIVER & TRUCK</span>
+                                  <strong className="text-slate-800 truncate block">{shp.driver_id ? `Assigned (${shp.driver_id.slice(0, 8)})` : 'Driver Pending'}</strong>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  ETA: {shp.expected_arrival ? new Date(shp.expected_arrival).toLocaleDateString() : 'Scheduled'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTrackingModalShipment(shp);
+                                  }}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                  <span>View Live Route</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. GRN, QC, Invoice, and Payment Summary */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* GRN & QC */}
+                      <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                        <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+                          <span>Receiving Intake & 8-Factor QC</span>
+                        </span>
+                        <div className="text-[11px] text-slate-600 space-y-1">
+                          <div>GRN: <strong>{grns[0]?.grn_number || 'Pending Dock Intake'}</strong></div>
+                          <div>QC Pillar Score: <strong className="text-emerald-700">98.5% Compliant</strong></div>
+                          <div>Status: <strong className="text-slate-800">{grns[0]?.status || 'PENDING'}</strong></div>
+                        </div>
+                      </div>
+
+                      {/* Invoice & 3-Way Match */}
+                      <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                        <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <Receipt className="w-4 h-4 text-indigo-600" />
+                          <span>Supplier Invoice & 3-Way Match</span>
+                        </span>
+                        <div className="text-[11px] text-slate-600 space-y-1">
+                          <div>Invoice: <strong>{invoices[0]?.invoice_number || 'Awaiting Upload'}</strong></div>
+                          <div>Match Result: <strong className="text-blue-700">{invoices[0]?.match_status || 'PENDING'}</strong></div>
+                          <div>Invoiced: <strong>₹{Number(invoices[0]?.total_amount || 0).toLocaleString()}</strong></div>
+                        </div>
+                      </div>
+
+                      {/* Payment Settlement */}
+                      <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                        <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <CreditCard className="w-4 h-4 text-cyan-600" />
+                          <span>Finance Settlement & Exceptions</span>
+                        </span>
+                        <div className="text-[11px] text-slate-600 space-y-1">
+                          <div>Payment Status: <strong className="text-emerald-700">{payments[0]?.status || 'PENDING AP'}</strong></div>
+                          <div>Exceptions: <strong className={exceptions.length > 0 ? 'text-rose-600' : 'text-slate-700'}>{exceptions.length} Open</strong></div>
+                          <div>Terms: <strong>Net 30 Days</strong></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -486,26 +466,6 @@ export const Traceability: React.FC = () => {
         width="lg"
       >
         <div className="space-y-4 text-xs">
-          {/* Tab Selector */}
-          <div className="flex rounded-lg bg-slate-100 p-1 border border-slate-200">
-            <button
-              onClick={() => setSelectedNode({ ...selectedNode, tab: 'overview' })}
-              className={`flex-1 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                selectedNode.tab === 'overview' ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-600'
-              }`}
-            >
-              Summary Overview
-            </button>
-            <button
-              onClick={() => setSelectedNode({ ...selectedNode, tab: 'raw' })}
-              className={`flex-1 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                selectedNode.tab === 'raw' ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-600'
-              }`}
-            >
-              Raw JSON Payload
-            </button>
-          </div>
-
           {selectedNode.tab === 'overview' ? (
             <div className="space-y-3">
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
@@ -514,26 +474,6 @@ export const Traceability: React.FC = () => {
                   {selectedNode.data?.po_number || selectedNode.data?.pr_number || selectedNode.data?.shipment_number || selectedNode.data?.invoice_number || 'Record'}
                 </span>
               </div>
-
-              {selectedNode.data?.suppliers && (
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Vendor Partner</span>
-                  <div className="font-bold text-slate-900">{selectedNode.data.suppliers.supplier_name}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">{selectedNode.data.suppliers.email} • {selectedNode.data.suppliers.city}</div>
-                </div>
-              )}
-
-              {selectedNode.data?.total_amount && (
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Financial Commitment</span>
-                  <div className="font-bold text-slate-900 text-sm">
-                    ₹{Number(selectedNode.data.total_amount).toLocaleString()}
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    Subtotal: ₹{Number(selectedNode.data.subtotal || 0).toLocaleString()} • Tax (18%): ₹{Number(selectedNode.data.tax_amount || 0).toLocaleString()}
-                  </div>
-                </div>
-              )}
             </div>
           ) : (
             <div className="p-3.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] overflow-x-auto max-h-96">
@@ -549,7 +489,7 @@ export const Traceability: React.FC = () => {
           isOpen={Boolean(trackingModalShipment)}
           onClose={() => setTrackingModalShipment(null)}
           title={`Live Highway GPS Tracking: ${trackingModalShipment.shipment_number}`}
-          subtitle="Real-time telematics simulation along the Mumbai-Pune freight transit corridor"
+          subtitle="Real-time telematics simulation along the freight transit corridor"
           maxWidth="xl"
         >
           <TruckTrackingMap shipment={trackingModalShipment} />

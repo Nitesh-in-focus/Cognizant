@@ -413,7 +413,7 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
       icon: ShieldCheck,
       headerColor: 'from-purple-950 via-slate-900 to-purple-950',
       accentColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
-      tagline: 'Supervise dockside unloading, create 100% manual GRNs, perform 5-pillar Quality Checks, and update supplier scorecards.',
+      tagline: 'Supervise dockside unloading, create 100% manual GRNs, perform 8-factor Quality Checks, and update supplier scorecards.',
       workflowSteps: [
         {
           step: 1,
@@ -431,8 +431,8 @@ export const SystemGuideModal: React.FC<SystemGuideModalProps> = ({ isOpen, onCl
         },
         {
           step: 3,
-          title: 'Execute 5-Pillar Quality Inspection & AI Analysis',
-          desc: 'Evaluate product quality, damage, packaging, documentation, and condition to finalize QC.',
+          title: 'Execute 8-Factor Quality Inspection & AI Analysis',
+          desc: 'Evaluate product quality, quantity accuracy, damage, packaging, documentation, delivery condition, compliance, and overall score.',
           actionText: 'Quality Check Inspection',
           actionPath: '/quality',
         },

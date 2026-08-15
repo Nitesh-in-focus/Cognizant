@@ -197,8 +197,10 @@ export const Payments: React.FC = () => {
                 </tr>
               ) : filteredPayments.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
-                    No payment records found. Click "Execute Payout" to disburse approved invoices.
+                  <td colSpan={6} className="py-16 text-center text-slate-400">
+                    <CreditCard className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
+                    <span className="font-bold text-slate-700 block text-sm">No Payment Disbursements yet</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">Approved and 3-way matched invoices will appear here for commercial settlement.</span>
                   </td>
                 </tr>
               ) : (

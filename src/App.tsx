@@ -29,6 +29,7 @@ import Alerts from './pages/Alerts';
 import { QualityCheckPage } from './pages/QualityCheck';
 import { SupplierPortal } from './pages/supplier/SupplierPortal';
 import { DriverPortal } from './pages/driver/DriverPortal';
+import Warehouses from './pages/Warehouses';
 
 export const App: React.FC = () => {
   const location = useLocation();
@@ -81,25 +82,60 @@ export const App: React.FC = () => {
           <Routes>
             <Route path="/" element={<Dashboard onOpenGuide={() => setOpenGuide(true)} />} />
             <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="/supplier" element={<SupplierPortal />} />
-            <Route path="/supplier/*" element={<SupplierPortal />} />
-            <Route path="/driver" element={<DriverPortal />} />
-            <Route path="/driver/*" element={<DriverPortal />} />
-            <Route path="/quality" element={<QualityCheckPage />} />
-            <Route path="/traceability" element={<Traceability />} />
+
+            {/* Worker Routes */}
+            <Route path="/worker/pr" element={<PurchaseRequisitions />} />
             <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
+
+            {/* Procurement Routes */}
+            <Route path="/procurement/pr" element={<PurchaseRequisitions />} />
+            <Route path="/procurement/po" element={<PurchaseOrders />} />
             <Route path="/purchase-orders" element={<PurchaseOrders />} />
             <Route path="/suppliers" element={<Suppliers />} />
+            <Route path="/warehouses" element={<Warehouses />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/procurement/exceptions" element={<Exceptions />} />
+
+            {/* Supplier Routes */}
+            <Route path="/supplier" element={<SupplierPortal />} />
+            <Route path="/supplier/pos" element={<SupplierPortal />} />
+            <Route path="/supplier/shipments" element={<SupplierPortal />} />
+            <Route path="/supplier/invoices" element={<SupplierPortal />} />
+            <Route path="/supplier/*" element={<SupplierPortal />} />
+
+            {/* Driver Routes */}
+            <Route path="/driver" element={<DriverPortal />} />
+            <Route path="/driver/dashboard" element={<DriverPortal />} />
+            <Route path="/driver/history" element={<DriverPortal />} />
+            <Route path="/driver/*" element={<DriverPortal />} />
+
+            {/* Logistics & Yard Routes */}
+            <Route path="/logistics/shipments" element={<Shipments />} />
             <Route path="/shipments" element={<Shipments />} />
-            <Route path="/trucks" element={<Trucks />} />
+            <Route path="/logistics/docks" element={<YardManagement />} />
             <Route path="/yard" element={<YardManagement />} />
+            <Route path="/trucks" element={<Trucks />} />
+
+            {/* Receiving & QC Routes */}
+            <Route path="/receiving/grn" element={<GoodsReceipts />} />
             <Route path="/grn" element={<GoodsReceipts />} />
+            <Route path="/receiving/qc" element={<QualityCheckPage />} />
+            <Route path="/quality" element={<QualityCheckPage />} />
+
+            {/* Finance & Settlements */}
+            <Route path="/finance/invoices" element={<Invoices />} />
             <Route path="/invoices" element={<Invoices />} />
-            <Route path="/exceptions" element={<Exceptions />} />
+            <Route path="/finance/payments" element={<Payments />} />
             <Route path="/payments" element={<Payments />} />
+            <Route path="/exceptions" element={<Exceptions />} />
+
+            {/* Traceability & Common */}
+            <Route path="/traceability" element={<Traceability />} />
+            <Route path="/suppliers" element={<Suppliers />} />
+            <Route path="/products" element={<Products />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/chat" element={<Dashboard onOpenGuide={() => setOpenGuide(true)} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

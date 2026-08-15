@@ -37,11 +37,16 @@ export const GoodsReceipts: React.FC = () => {
 
   const [newGrn, setNewGrn] = useState({
     po_id: '',
+    supplier_id: '',
     product_id: '',
+    shipment_id: '',
+    expected_quantity: 100,
     received_quantity: 100,
+    accepted_quantity: 100,
     damaged_quantity: 0,
     missing_quantity: 0,
-    notes: 'All boxes passed visual barcode & seal inspection.',
+    rejected_quantity: 0,
+    notes: 'All items verified against PO manifest and dock inspection standards.',
   });
 
   useEffect(() => {
@@ -56,15 +61,18 @@ export const GoodsReceipts: React.FC = () => {
           .from('goods_receipts')
           .select(`
             *,
-            purchase_orders(po_number, suppliers(supplier_name)),
+            purchase_orders(po_number, total_amount, suppliers(supplier_name, supplier_code, city), warehouses(warehouse_name)),
             shipments(shipment_number),
             grn_items(
               *,
-              products(product_name, unit_of_measure)
+              products(product_name, product_code, unit_of_measure, unit_price)
             )
           `)
           .order('created_at', { ascending: false }),
-        supabase.from('purchase_orders').select('*, suppliers(supplier_name), po_items(*, products(*))'),
+        supabase
+          .from('purchase_orders')
+          .select('*, suppliers(supplier_id, supplier_name, supplier_code, city), warehouses(warehouse_name), purchase_requisitions(pr_number), po_items(*, products(*)), shipments(*)')
+          .order('order_date', { ascending: false }),
         supabase.from('products').select('*'),
       ]);
 
@@ -72,11 +80,24 @@ export const GoodsReceipts: React.FC = () => {
       setPos(poData || []);
       setProducts(prodData || []);
 
-      if (poData?.length && prodData?.length && !newGrn.po_id) {
+      if (poData?.length && !newGrn.po_id) {
+        const firstPo = poData[0];
+        const firstItem = (firstPo as any).po_items?.[0];
+        const firstProdId = firstItem?.product_id || (prodData?.[0]?.product_id ?? '');
+        const expQty = Number(firstItem?.ordered_quantity) || Number((firstPo as any).total_quantity) || 100;
+
         setNewGrn((prev) => ({
           ...prev,
-          po_id: poData[0].po_id,
-          product_id: prodData[0].product_id,
+          po_id: firstPo.po_id,
+          supplier_id: firstPo.supplier_id || (firstPo.suppliers as any)?.supplier_id || '',
+          product_id: firstProdId,
+          shipment_id: (firstPo as any).shipments?.[0]?.shipment_id || '',
+          expected_quantity: expQty,
+          received_quantity: expQty,
+          accepted_quantity: expQty,
+          damaged_quantity: 0,
+          missing_quantity: 0,
+          rejected_quantity: 0,
         }));
       }
     } catch (err: any) {
@@ -84,6 +105,35 @@ export const GoodsReceipts: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Auto-fill GRN context from selected PO (Updates 11 Section 3)
+  const handlePoSelect = (poId: string) => {
+    const po = pos.find((p) => p.po_id === poId);
+    if (!po) {
+      setNewGrn((prev) => ({ ...prev, po_id: poId }));
+      return;
+    }
+
+    const firstItem = (po as any).po_items?.[0];
+    const targetProdId = firstItem?.product_id || (products.length > 0 ? products[0].product_id : '');
+    const orderedQty = Number(firstItem?.ordered_quantity) || Number((po as any).total_quantity) || 100;
+    const targetSupplierId = po.supplier_id || (po.suppliers as any)?.supplier_id || '';
+    const targetShipmentId = (po as any).shipments?.[0]?.shipment_id || '';
+
+    setNewGrn((prev) => ({
+      ...prev,
+      po_id: poId,
+      supplier_id: targetSupplierId,
+      product_id: targetProdId,
+      shipment_id: targetShipmentId,
+      expected_quantity: orderedQty,
+      received_quantity: orderedQty,
+      accepted_quantity: orderedQty,
+      damaged_quantity: 0,
+      missing_quantity: 0,
+      rejected_quantity: 0,
+    }));
   };
 
   const handleExtractNlp = async () => {
@@ -99,13 +149,19 @@ export const GoodsReceipts: React.FC = () => {
 
       const targetPo = pos.find((p) => p.po_id === extracted.po_id) || pos[0];
       const targetProdId = targetPo?.po_items?.[0]?.product_id || products[0]?.product_id;
+      const expectedQty = Number(targetPo?.po_items?.[0]?.ordered_quantity) || Number(targetPo?.total_quantity) || extracted.received_quantity;
 
       setNewGrn({
         po_id: extracted.po_id || pos[0]?.po_id,
+        supplier_id: targetPo?.supplier_id || '',
         product_id: targetProdId,
+        shipment_id: targetPo?.shipments?.[0]?.shipment_id || '',
+        expected_quantity: expectedQty,
         received_quantity: extracted.received_quantity,
+        accepted_quantity: Math.max(0, extracted.received_quantity - extracted.damaged_quantity - extracted.missing_quantity),
         damaged_quantity: extracted.damaged_quantity,
         missing_quantity: extracted.missing_quantity,
+        rejected_quantity: 0,
         notes: extracted.remarks || nlpPrompt,
       });
       showSnackbar(`AI successfully extracted receiving parameters (${extracted.confidence}% confidence)!`, 'success');
@@ -123,14 +179,15 @@ export const GoodsReceipts: React.FC = () => {
     }
 
     try {
+      const selectedPo = pos.find((p) => p.po_id === newGrn.po_id);
       if (!newGrn.po_id || !newGrn.product_id) {
-        showSnackbar('Please select PO and Product item', 'error');
+        showSnackbar('Please select a Target Purchase Order and Product item', 'error');
         return;
       }
 
       const suffix = Math.floor(1000 + Math.random() * 9000);
       const grnNumber = `GRN-2026-${suffix}`;
-      const acceptedQty = Math.max(0, newGrn.received_quantity - newGrn.damaged_quantity);
+      const acceptedQty = Math.max(0, newGrn.received_quantity - newGrn.damaged_quantity - (newGrn.rejected_quantity || 0));
 
       const { data: grn, error: grnErr } = await supabase
         .from('goods_receipts')
@@ -138,8 +195,10 @@ export const GoodsReceipts: React.FC = () => {
           {
             grn_number: grnNumber,
             po_id: newGrn.po_id,
+            supplier_id: newGrn.supplier_id || selectedPo?.supplier_id || null,
+            shipment_id: newGrn.shipment_id || (selectedPo?.shipments?.[0]?.shipment_id ?? null),
             received_date: new Date().toISOString(),
-            status: newGrn.damaged_quantity > 0 ? 'PENDING_INSPECTION' : 'COMPLETED',
+            status: newGrn.damaged_quantity > 0 || (newGrn.missing_quantity || 0) > 0 ? 'PENDING_INSPECTION' : 'COMPLETED',
             notes: newGrn.notes,
           },
         ])
@@ -152,7 +211,7 @@ export const GoodsReceipts: React.FC = () => {
         {
           grn_id: grn.grn_id,
           product_id: newGrn.product_id,
-          ordered_quantity: newGrn.received_quantity,
+          ordered_quantity: Number(newGrn.expected_quantity || newGrn.received_quantity),
           received_quantity: newGrn.received_quantity,
           damaged_quantity: newGrn.damaged_quantity,
           accepted_quantity: acceptedQty,
@@ -162,15 +221,17 @@ export const GoodsReceipts: React.FC = () => {
 
       await logAuditAction('GRN_LOGGED', 'goods_receipts', grn.grn_id, {
         grn_number: grnNumber,
+        po_id: newGrn.po_id,
+        supplier_id: newGrn.supplier_id,
         received_quantity: newGrn.received_quantity,
         damaged_quantity: newGrn.damaged_quantity,
         accepted_quantity: acceptedQty,
       });
 
-      if (newGrn.damaged_quantity > 0) {
+      if (newGrn.damaged_quantity > 0 || newGrn.missing_quantity > 0) {
         addAlert({
-          title: `Damage Discrepancy Flagged: ${grnNumber}`,
-          message: `${newGrn.damaged_quantity} units damaged during receiving. Exception route triggered.`,
+          title: `Receiving Discrepancy Flagged: ${grnNumber}`,
+          message: `${newGrn.damaged_quantity} damaged, ${newGrn.missing_quantity} missing during dock intake. Flagged for 3-way match.`,
           severity: 'warning',
           link: '/exceptions',
         });
@@ -266,8 +327,17 @@ export const GoodsReceipts: React.FC = () => {
                 </tr>
               ) : filteredGrns.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
-                    No goods receipts logged. Click "Create GRN" to accept arriving stock.
+                  <td colSpan={6} className="py-16 text-center text-slate-400">
+                    <CheckCircle2 className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
+                    <span className="font-bold text-slate-700 block text-sm">No Goods Receipts (GRN) logged yet</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">GRNs are created upon physical dock arrival and cargo intake inspection.</span>
+                    <button
+                      onClick={() => setOpenCreate(true)}
+                      className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Create First GRN</span>
+                    </button>
                   </td>
                 </tr>
               ) : (
@@ -437,80 +507,128 @@ export const GoodsReceipts: React.FC = () => {
             </div>
           )}
 
-          {/* Form Fields for verification & manual editing */}
+          {/* Form Fields for verification & manual editing (Updates 11 Section 3) */}
           <div className="space-y-3 pt-1">
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
-                <span>Target Purchase Order</span>
-                {newGrn.po_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Matched</span>}
-              </label>
-              <select
-                value={newGrn.po_id}
-                onChange={(e) => setNewGrn({ ...newGrn, po_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-              >
-                {pos.map((p) => (
-                  <option key={p.po_id} value={p.po_id}>
-                    {p.po_number} ({p.suppliers?.supplier_name} • Val: ₹{Number(p.total_amount).toLocaleString()})
-                  </option>
-                ))}
-              </select>
-            </div>
+            {(() => {
+              const selectedPo = pos.find((p) => p.po_id === newGrn.po_id);
+              const derivedSupplier = (selectedPo as any)?.suppliers;
+              const derivedWarehouse = (selectedPo as any)?.warehouses?.warehouse_name || 'Central Distribution Center';
+              const poItems = (selectedPo as any)?.po_items || [];
+              const firstItem = poItems[0];
 
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
-                <span>Received Product SKU</span>
-                {newGrn.product_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Auto</span>}
-              </label>
-              <select
-                value={newGrn.product_id}
-                onChange={(e) => setNewGrn({ ...newGrn, product_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-              >
-                {products.map((p) => (
-                  <option key={p.product_id} value={p.product_id}>
-                    {p.product_name} ({p.product_code})
-                  </option>
-                ))}
-              </select>
-            </div>
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
+                      <span>Select Target Purchase Order <strong className="text-rose-500">*</strong></span>
+                      {newGrn.po_id && <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Auto-Linked</span>}
+                    </label>
+                    <select
+                      value={newGrn.po_id}
+                      onChange={(e) => handlePoSelect(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-800 text-xs font-mono"
+                    >
+                      <option value="">-- Choose Purchase Order --</option>
+                      {pos.map((p) => (
+                        <option key={p.po_id} value={p.po_id}>
+                          {p.po_number} — {p.suppliers?.supplier_name || 'Vendor'} (₹{Number(p.total_amount || 0).toLocaleString()})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">
-                  Received Qty
-                </label>
-                <input
-                  type="number"
-                  value={newGrn.received_quantity}
-                  onChange={(e) => setNewGrn({ ...newGrn, received_quantity: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-                />
-              </div>
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1 flex items-center justify-between">
-                  <span>Damaged Qty</span>
-                  {newGrn.damaged_quantity > 0 && <span className="text-[10px] text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded">Flagged</span>}
-                </label>
-                <input
-                  type="number"
-                  value={newGrn.damaged_quantity}
-                  onChange={(e) => setNewGrn({ ...newGrn, damaged_quantity: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-                />
-              </div>
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">
-                  Missing Qty
-                </label>
-                <input
-                  type="number"
-                  value={newGrn.missing_quantity}
-                  onChange={(e) => setNewGrn({ ...newGrn, missing_quantity: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-                />
-              </div>
-            </div>
+                  {/* Auto-Derived PO Summary Banner */}
+                  {selectedPo && (
+                    <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold block">Supplier Payee</span>
+                        <strong className="text-slate-900 truncate block">{derivedSupplier?.supplier_name || 'Supplier'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold block">Ordered Contract Qty</span>
+                        <strong className="text-blue-700 font-mono">{firstItem?.ordered_quantity || selectedPo.total_quantity || 100} units</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold block">Unit Contract Price</span>
+                        <strong className="text-slate-900 font-mono">₹{firstItem?.unit_price || 250}/unit</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold block">Receiving Facility</span>
+                        <strong className="text-slate-900 truncate block">{derivedWarehouse}</strong>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Received Product SKU Specification</label>
+                    <select
+                      value={newGrn.product_id}
+                      onChange={(e) => setNewGrn({ ...newGrn, product_id: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 text-xs"
+                    >
+                      {products.map((p) => (
+                        <option key={p.product_id} value={p.product_id}>
+                          {p.product_name} ({p.product_code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-600 font-bold block mb-1 uppercase">Received Qty</label>
+                      <input
+                        type="number"
+                        value={newGrn.received_quantity}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value));
+                          setNewGrn({
+                            ...newGrn,
+                            received_quantity: val,
+                            accepted_quantity: Math.max(0, val - newGrn.damaged_quantity - (newGrn.rejected_quantity || 0)),
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-rose-600 font-bold block mb-1 uppercase">Damaged Qty</label>
+                      <input
+                        type="number"
+                        value={newGrn.damaged_quantity}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value));
+                          setNewGrn({
+                            ...newGrn,
+                            damaged_quantity: val,
+                            accepted_quantity: Math.max(0, newGrn.received_quantity - val - (newGrn.rejected_quantity || 0)),
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-rose-700 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-amber-600 font-bold block mb-1 uppercase">Missing Qty</label>
+                      <input
+                        type="number"
+                        value={newGrn.missing_quantity}
+                        onChange={(e) => setNewGrn({ ...newGrn, missing_quantity: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-amber-700 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-emerald-600 font-bold block mb-1 uppercase">Accepted Qty</label>
+                      <input
+                        type="number"
+                        value={newGrn.accepted_quantity}
+                        onChange={(e) => setNewGrn({ ...newGrn, accepted_quantity: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-2.5 py-1.5 bg-emerald-50 border border-emerald-300 rounded-lg font-bold text-emerald-800 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Net accepted preview */}
             <div className={`p-3 rounded-lg border flex items-center gap-3 ${

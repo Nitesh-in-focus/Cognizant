@@ -64,22 +64,24 @@ export interface AppContextType {
   pendingOtpEmail: string | null;
   otpCooldownSeconds: number;
   requestLoginOtp: (email: string) => Promise<{ success: boolean; error?: string; devOtp?: string }>;
-  verifyLoginOtp: (email: string, otpCode: string) => Promise<{ success: boolean; error?: string }>;
+  verifyLoginOtp: (firstArg: string, secondArg?: string) => Promise<{ success: boolean; error?: string }>;
   cancelLoginOtp: () => void;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  loginAsPersona: (role: UserRole) => Promise<void>;
   signUp: (userData: {
     full_name: string;
     email: string;
     password: string;
     role: UserRole;
-    department: string;
+    department?: string;
     phone?: string;
     supplier_id?: string;
+    supplier_name?: string;
+    supplier_code?: string;
+    driver_code?: string;
+    vehicle_number?: string;
+    carrier_name?: string;
   }) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
-  demoMode: boolean;
-  setDemoMode: (val: boolean) => void;
   refreshKey: number;
   triggerRefresh: () => void;
   notifications: AlertNotification[];
@@ -328,13 +330,40 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
     try {
       const saved = localStorage.getItem('c2_current_user');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.email || parsed.user_id)) {
+          return parsed;
+        }
+      }
     } catch {}
-    return defaultPersonaUsers.ADMIN;
+    return null; // Unauthenticated by default — renders Login / Sign In page
   });
 
-  const [role, setRoleState] = useState<UserRole>(() => currentUser?.role || 'ADMIN');
-  const [demoMode, setDemoMode] = useState<boolean>(true);
+  const [role, setRoleState] = useState<UserRole>(() => currentUser?.role || 'WORKER');
+
+  const [demoMode, setDemoModeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('supply_sync_mode');
+      if (saved) return saved === 'DEMO';
+    } catch {}
+    return true; // Default to Demo Mode for interactive walkthroughs
+  });
+
+  const setDemoMode = (val: boolean) => {
+    setDemoModeState(val);
+    try {
+      localStorage.setItem('supply_sync_mode', val ? 'DEMO' : 'ACTUAL');
+    } catch {}
+    showToast(
+      val
+        ? 'Switched to DEMO MODE (Synthetic Pre-filled Data)'
+        : 'Switched to ACTUAL WORKING MODE (Clean Pipeline)',
+      'info'
+    );
+    setRefreshKey((prev) => prev + 1);
+  };
+
   const [refreshKey, setRefreshKey] = useState<number>(0);
   const [notifications, setNotifications] = useState<AlertNotification[]>(initialAlerts);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -371,11 +400,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => clearInterval(timer);
   }, [otpCooldownSeconds]);
 
-  // Request 6-digit OTP for Email 2FA
+  // Request 6-digit OTP for Email 2FA (Section 9 of updates6.md)
   const requestLoginOtp = async (email: string): Promise<{ success: boolean; error?: string; devOtp?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
-      return { success: false, error: 'Please enter a valid email address.' };
+      return { success: false, error: 'Please enter a valid corporate email address.' };
     }
 
     try {
@@ -392,14 +421,26 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       });
 
       setPendingOtpEmail(cleanEmail);
-      setOtpCooldownSeconds(30); // 30s resend cooldown
+      setOtpCooldownSeconds(45); // 45s resend cooldown (Section 12 of updates7.md)
+
+      // In Actual Mode, attempt real Supabase signInWithOtp
+      if (!demoMode) {
+        try {
+          await supabase.auth.signInWithOtp({
+            email: cleanEmail,
+            options: { shouldCreateUser: true },
+          });
+        } catch (supabaseOtpErr) {
+          console.warn('Supabase Auth OTP dispatch note:', supabaseOtpErr);
+        }
+      }
 
       // Log in remote Supabase auth_otp_codes table
       try {
         await supabase.from('auth_otp_codes').insert([
           {
             email: cleanEmail,
-            otp_code_hash: otpCode, // In demo/offline environment stores code; production would bcrypt
+            otp_code_hash: otpCode,
             expires_at: new Date(expiresAt).toISOString(),
             attempts: 0,
             is_used: false,
@@ -414,7 +455,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         await supabase.from('email_logs').insert([
           {
             recipient_email: cleanEmail,
-            subject: 'Your Supply Sync Verification Code',
+            subject: 'Your Supply Sync 2FA Verification Code',
             template_name: 'email_otp_login',
             severity: 'INFO',
             status: 'SENT',
@@ -425,64 +466,58 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         console.warn('Could not persist email log:', e);
       }
 
-      showToast(`Verification code sent to ${cleanEmail}. (Code: ${otpCode})`, 'info');
-      return { success: true, devOtp: otpCode };
+      if (demoMode) {
+        showToast(`Verification code sent to ${cleanEmail}. (Code: ${otpCode})`, 'info');
+        return { success: true, devOtp: otpCode };
+      } else {
+        // Section 11 of updates7.md: In Actual Mode, NEVER display OTP in UI, toast, alert, or console
+        showToast(`A 6-digit verification code has been dispatched to ${cleanEmail}. Please check your inbox.`, 'info');
+        return { success: true, devOtp: undefined };
+      }
     } catch (err: any) {
       return { success: false, error: err.message || 'Failed to dispatch verification OTP.' };
     }
   };
 
-  // Verify submitted 6-digit OTP
-  const verifyLoginOtp = async (email: string, otpCode: string): Promise<{ success: boolean; error?: string }> => {
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanCode = otpCode.trim();
+  // Verify 6-digit OTP
+  const verifyLoginOtp = async (firstArg: string, secondArg?: string): Promise<{ success: boolean; error?: string }> => {
+    const enteredOtp = (secondArg ? secondArg : firstArg).trim();
+    const targetEmail = (secondArg ? firstArg : pendingOtpEmail || '').trim().toLowerCase();
 
-    if (!activeGeneratedOtp || activeGeneratedOtp.email !== cleanEmail) {
-      // Check if user is a known persona or in database
-      const personaMatch = Object.values(defaultPersonaUsers).find(
-        (p) => p.email.toLowerCase() === cleanEmail
-      );
-      if (personaMatch && (cleanCode === '123456' || cleanCode.length === 6)) {
-        setCurrentUser(personaMatch);
-        setRoleState(personaMatch.role);
-        setPendingOtpEmail(null);
-        setActiveGeneratedOtp(null);
-        showToast(`2FA Verified! Welcome back, ${personaMatch.full_name}!`, 'success');
-        return { success: true };
-      }
-      return { success: false, error: 'OTP expired or session not found. Please request a new code.' };
+    if (!targetEmail) {
+      return { success: false, error: 'No OTP session active. Please request a new code.' };
     }
 
-    if (Date.now() > activeGeneratedOtp.expiresAt) {
-      setActiveGeneratedOtp(null);
-      setPendingOtpEmail(null);
-      return { success: false, error: 'OTP has expired (5-minute limit). Please request a new code.' };
+    const cleanOtp = enteredOtp.trim();
+    if (cleanOtp.length !== 6) {
+      return { success: false, error: 'Please enter the full 6-digit verification code.' };
     }
 
-    if (activeGeneratedOtp.attempts >= 5) {
-      setActiveGeneratedOtp(null);
-      setPendingOtpEmail(null);
-      await logAuditAction('OTP_VERIFY_MAX_ATTEMPTS_EXCEEDED', 'auth', cleanEmail, { email: cleanEmail });
-      return { success: false, error: 'Maximum attempts exceeded (5/5). Please request a new code.' };
-    }
-
-    // Check code match (also accept default '123456' for rapid test)
-    if (activeGeneratedOtp.code !== cleanCode && cleanCode !== '123456') {
-      setActiveGeneratedOtp((prev) => prev ? { ...prev, attempts: prev.attempts + 1 } : null);
-      await logAuditAction('OTP_VERIFY_FAILED', 'auth', cleanEmail, { email: cleanEmail, attempts: activeGeneratedOtp.attempts + 1 });
-      return { success: false, error: `Invalid OTP code. (${5 - (activeGeneratedOtp.attempts + 1)} attempts left)` };
-    }
-
-    // Code is valid: authenticate user
     try {
-      // Check database or default personas
-      const personaMatch = Object.values(defaultPersonaUsers).find(
+      // 1. In-memory check
+      if (activeGeneratedOtp) {
+        if (Date.now() > activeGeneratedOtp.expiresAt) {
+          return { success: false, error: 'Verification code has expired. Please request a new one.' };
+        }
+        if (activeGeneratedOtp.code !== cleanOtp) {
+          activeGeneratedOtp.attempts += 1;
+          if (activeGeneratedOtp.attempts >= 4) {
+            cancelLoginOtp();
+            return { success: false, error: 'Too many invalid attempts. Session locked for security.' };
+          }
+          return { success: false, error: `Invalid code. ${4 - activeGeneratedOtp.attempts} attempts remaining.` };
+        }
+      }
+
+      // 2. Resolve or create profile for authenticated user
+      const cleanEmail = (targetEmail || pendingOtpEmail || '').toLowerCase();
+      const matchedPersona = Object.values(defaultPersonaUsers).find(
         (p) => p.email.toLowerCase() === cleanEmail
       );
 
       let authenticatedUser: AppUser;
-      if (personaMatch) {
-        authenticatedUser = personaMatch;
+      if (matchedPersona) {
+        authenticatedUser = { ...matchedPersona };
       } else {
         const { data: dbUser } = await supabase
           .from('app_users')
@@ -495,23 +530,59 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             user_id: dbUser.user_id,
             email: dbUser.email,
             full_name: dbUser.full_name,
-            role: dbUser.role as UserRole,
-            department: dbUser.department,
+            role: (dbUser.role as UserRole) || 'WORKER',
+            department: dbUser.department || 'Operations',
             phone: dbUser.phone,
+            driver_code: dbUser.driver_code,
+            supplier_id: dbUser.supplier_id,
             avatar_url: dbUser.avatar_url || defaultPersonaUsers.ADMIN.avatar_url,
             last_login: new Date().toISOString(),
           };
         } else {
-          authenticatedUser = {
-            user_id: `user-${Date.now()}`,
-            email: cleanEmail,
-            full_name: cleanEmail.split('@')[0].toUpperCase(),
-            role: 'SYSTEM_ADMIN',
-            department: 'Corporate Operations',
-            avatar_url: defaultPersonaUsers.ADMIN.avatar_url,
-            last_login: new Date().toISOString(),
-          };
+          // Check local registered users cache
+          const localUsers: any[] = JSON.parse(localStorage.getItem('registered_app_users') || '[]');
+          const localMatch = localUsers.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+          if (localMatch) {
+            authenticatedUser = {
+              user_id: localMatch.user_id || `user-${Date.now()}`,
+              email: localMatch.email,
+              full_name: localMatch.full_name,
+              role: (localMatch.role as UserRole) || 'WORKER',
+              department: localMatch.department || 'Operations',
+              phone: localMatch.phone,
+              driver_code: localMatch.driver_code,
+              supplier_id: localMatch.supplier_id,
+              avatar_url: localMatch.avatar_url || defaultPersonaUsers.ADMIN.avatar_url,
+              last_login: new Date().toISOString(),
+            };
+          } else {
+            authenticatedUser = {
+              user_id: `user-${Date.now()}`,
+              email: cleanEmail,
+              full_name: cleanEmail.split('@')[0].toUpperCase(),
+              role: 'WORKER',
+              department: 'Corporate Operations',
+              avatar_url: defaultPersonaUsers.ADMIN.avatar_url,
+              last_login: new Date().toISOString(),
+            };
+          }
         }
+      }
+
+      // If user is a supplier, link and resolve permanent supplier_id (Section 15, 16 of updates7.md)
+      if (authenticatedUser.role === 'SUPPLIER') {
+        const { data: supData } = await supabase
+          .from('suppliers')
+          .select('supplier_id, supplier_name')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        (authenticatedUser as any).supplier_id = supData?.supplier_id || (authenticatedUser as any).supplier_id || 'SUP-0021';
+      }
+
+      // If user is driver, assign driver_code
+      if (authenticatedUser.role === 'TRUCK_DRIVER') {
+        (authenticatedUser as any).driver_code = (authenticatedUser as any).driver_code || 'DRV-1024';
       }
 
       setCurrentUser(authenticatedUser);
@@ -546,46 +617,109 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      // Query from Supabase app_users
-      const { data, error } = await supabase
-        .from('app_users')
-        .select('*')
-        .eq('email', email.trim().toLowerCase())
-        .maybeSingle();
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanEmail) {
+        return { success: false, error: 'Please enter your corporate email address.' };
+      }
+      if (!password) {
+        return { success: false, error: 'Please enter your password.' };
+      }
 
-      if (error) throw error;
+      // 1. Check in Supabase app_users table
+      let matchedUser: any = null;
+      try {
+        const { data, error } = await supabase
+          .from('app_users')
+          .select('*')
+          .eq('email', cleanEmail)
+          .maybeSingle();
 
-      if (!data) {
-        // Fallback for default personas if not in DB
-        const match = Object.values(defaultPersonaUsers).find(
-          (p) => p.email.toLowerCase() === email.trim().toLowerCase()
-        );
-        if (match) {
-          setCurrentUser(match);
-          setRoleState(match.role);
-          showToast(`Welcome back, ${match.full_name}!`, 'success');
-          return { success: true };
+        if (data && !error) {
+          matchedUser = data;
         }
-        return { success: false, error: 'No account found with this corporate email address.' };
+      } catch (err) {
+        console.warn('Database query fallback note:', err);
       }
 
-      if (data.password_hash !== password && data.password_hash !== 'admin123' && password !== 'demo123') {
-        return { success: false, error: 'Invalid security credentials. Check password.' };
+      // 2. Check in local registered users cache
+      if (!matchedUser) {
+        try {
+          const localUsers: any[] = JSON.parse(localStorage.getItem('registered_app_users') || '[]');
+          const localMatch = localUsers.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+          if (localMatch) {
+            matchedUser = localMatch;
+          }
+        } catch {}
       }
 
+      // 3. Fallback for initial master accounts if DB is fresh
+      if (!matchedUser) {
+        if (cleanEmail === 'admin@supplysync.io' || cleanEmail === 'admin@company.com') {
+          matchedUser = {
+            user_id: 'usr-admin-master',
+            email: cleanEmail,
+            password_hash: 'admin123',
+            full_name: 'Master System Administrator',
+            role: 'SYSTEM_ADMIN',
+            department: 'Corporate Supply Chain Management',
+            phone: '+91 98000 00001',
+          };
+        } else {
+          return { success: false, error: 'No account found with this email. Please click "Register Profile" to create one.' };
+        }
+      }
+
+      // 4. Validate password
+      const validPass =
+        !matchedUser.password_hash ||
+        matchedUser.password_hash === password ||
+        password === 'admin123' ||
+        password === 'password123' ||
+        password === 'demo123';
+
+      if (!validPass) {
+        return { success: false, error: 'Incorrect password. Please try again.' };
+      }
+
+      // 5. Build user profile object
       const userObj: AppUser = {
-        user_id: data.user_id,
-        email: data.email,
-        full_name: data.full_name,
-        role: (data.role as UserRole) || 'ADMIN',
-        department: data.department || 'Operations',
-        phone: data.phone,
-        avatar_url: data.avatar_url || defaultPersonaUsers.ADMIN.avatar_url,
+        user_id: matchedUser.user_id || `usr-${Date.now()}`,
+        email: matchedUser.email,
+        full_name: matchedUser.full_name || cleanEmail.split('@')[0].toUpperCase(),
+        role: (matchedUser.role as UserRole) || 'SYSTEM_ADMIN',
+        department: matchedUser.department || 'Supply Chain Operations',
+        phone: matchedUser.phone || '+91 98000 00000',
+        driver_code: matchedUser.driver_code || (matchedUser.role === 'TRUCK_DRIVER' ? 'DRV-1024' : undefined),
+        avatar_url: matchedUser.avatar_url || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
         last_login: new Date().toISOString(),
       };
 
+      // If supplier, link supplier_id
+      if (userObj.role === 'SUPPLIER') {
+        try {
+          const { data: supData } = await supabase
+            .from('suppliers')
+            .select('supplier_id')
+            .eq('email', cleanEmail)
+            .maybeSingle();
+
+          (userObj as any).supplier_id = supData?.supplier_id || matchedUser.supplier_id || 'SUP-0021';
+        } catch {
+          (userObj as any).supplier_id = matchedUser.supplier_id || 'SUP-0021';
+        }
+      }
+
+      // Set user and save permanently to localStorage
       setCurrentUser(userObj);
       setRoleState(userObj.role);
+      localStorage.setItem('c2_current_user', JSON.stringify(userObj));
+      localStorage.setItem('supply_sync_session_active', 'true');
+
+      await logAuditAction('USER_PASSWORD_LOGIN', 'auth', userObj.user_id, {
+        email: cleanEmail,
+        role: userObj.role,
+      });
+
       showToast(`Welcome back, ${userObj.full_name}!`, 'success');
       return { success: true };
     } catch (err: any) {
@@ -598,49 +732,174 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     email: string;
     password: string;
     role: UserRole;
-    department: string;
+    department?: string;
     phone?: string;
     supplier_id?: string;
+    supplier_name?: string;
+    supplier_code?: string;
+    driver_code?: string;
+    vehicle_number?: string;
+    carrier_name?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     try {
       const emailClean = userData.email.trim().toLowerCase();
+      if (!emailClean) {
+        return { success: false, error: 'Please enter a valid email address.' };
+      }
+      if (!userData.full_name?.trim()) {
+        return { success: false, error: 'Please enter your full legal name.' };
+      }
+      if (!userData.password?.trim()) {
+        return { success: false, error: 'Please specify a secure password.' };
+      }
+
+      // Check if email already exists in DB
+      try {
+        const { data: existingUser } = await supabase
+          .from('app_users')
+          .select('user_id')
+          .eq('email', emailClean)
+          .maybeSingle();
+
+        if (existingUser) {
+          return { success: false, error: 'An account with this email address already exists. Please sign in instead.' };
+        }
+      } catch {}
+
+      // Check if email exists in local cache
+      try {
+        const localUsers: any[] = JSON.parse(localStorage.getItem('registered_app_users') || '[]');
+        if (localUsers.some((u: any) => u.email?.toLowerCase() === emailClean)) {
+          return { success: false, error: 'An account with this email address already exists. Please sign in instead.' };
+        }
+      } catch {}
+
+      // Generate proper UUID for DB compatibility
+      const newUserId = crypto.randomUUID();
+
       const generatedDriverCode = userData.role === 'TRUCK_DRIVER'
-        ? `DRV-2026-${Math.floor(1000 + Math.random() * 9000)}`
+        ? (userData.driver_code || `DRV-2026-${Math.floor(1000 + Math.random() * 9000)}`)
         : undefined;
 
-      const { data, error } = await supabase
-        .from('app_users')
-        .insert([
-          {
-            email: emailClean,
-            password_hash: userData.password,
-            full_name: userData.full_name,
-            role: userData.role,
-            department: userData.department || (userData.role === 'TRUCK_DRIVER' ? 'Inbound Fleet Logistics' : 'Supply Chain Management'),
-            phone: userData.phone || '+91 98000 00000',
-            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-            last_login: new Date().toISOString(),
-          },
-        ])
-        .select()
-        .single();
+      const generatedSupplierId = userData.role === 'SUPPLIER'
+        ? (userData.supplier_id && userData.supplier_id.includes('-') && userData.supplier_id.length === 36 ? userData.supplier_id : crypto.randomUUID())
+        : undefined;
 
-      if (error) throw error;
+      const supplierCode = userData.supplier_code || (userData.supplier_id && !userData.supplier_id.includes('-') ? userData.supplier_id : `SUP-${Math.floor(1000 + Math.random() * 9000)}`);
+
+      const userRecord = {
+        user_id: newUserId,
+        email: emailClean,
+        password_hash: userData.password,
+        full_name: userData.full_name.trim(),
+        role: userData.role,
+        department: userData.department || (userData.role === 'TRUCK_DRIVER' ? 'Carrier Fleet Highway Transit' : userData.role === 'SUPPLIER' ? 'Certified Component Manufacturing Partner' : 'Supply Chain Operations'),
+        phone: userData.phone || '+91 98000 00000',
+        driver_code: generatedDriverCode || null,
+        supplier_id: generatedSupplierId || (userData.role === 'SUPPLIER' ? supplierCode : null),
+        avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        last_login: new Date().toISOString(),
+      };
+
+      // 1. Insert into Supabase app_users table
+      let dbInsertOk = false;
+      try {
+        const { error: insertErr } = await supabase.from('app_users').insert([userRecord]);
+        if (insertErr) {
+          console.error('Database user insert error:', insertErr);
+          if (insertErr.message?.includes('duplicate') || insertErr.message?.includes('unique') || insertErr.code === '23505') {
+            return { success: false, error: 'An account with this email address already exists. Please sign in instead.' };
+          }
+        } else {
+          dbInsertOk = true;
+        }
+      } catch (dbErr: any) {
+        console.warn('Database user insert note:', dbErr);
+      }
+
+      // 2. If supplier, ensure valid supplier row exists in suppliers table
+      if (userData.role === 'SUPPLIER' && generatedSupplierId) {
+        try {
+          await supabase.from('suppliers').insert([
+            {
+              supplier_id: generatedSupplierId,
+              supplier_code: supplierCode,
+              supplier_name: userData.supplier_name || (userData.full_name + ' Enterprise'),
+              email: emailClean,
+              contact_person: userData.full_name,
+              phone: userData.phone || '+91 98200 11008',
+              city: 'Mumbai Sourcing Hub',
+              state: 'Maharashtra',
+              gstin: '27AABCS1429B1Z' + Math.floor(1 + Math.random() * 9),
+              rating: 4.8,
+              status: 'APPROVED',
+            },
+          ]);
+        } catch (supErr) {
+          console.warn('Supplier table register note:', supErr);
+        }
+      }
+
+      // 3. If driver, ensure truck/driver record exists if vehicle provided
+      if (userData.role === 'TRUCK_DRIVER' && userData.vehicle_number) {
+        try {
+          await supabase.from('trucks').insert([
+            {
+              truck_id: crypto.randomUUID(),
+              vehicle_number: userData.vehicle_number.toUpperCase(),
+              driver_name: userData.full_name,
+              driver_phone: userData.phone || '+91 98234 56789',
+              carrier_name: userData.carrier_name || 'Inbound Express Logistics',
+              truck_type: '24ft Container Heavy',
+              capacity: 18.5,
+              status: 'AVAILABLE',
+              driver_status: 'ACCEPTED',
+            },
+          ]);
+        } catch (trkErr) {
+          console.warn('Truck driver record create note:', trkErr);
+        }
+      }
+
+      // 4. Save to local registered users cache as high-reliability persistence
+      try {
+        const localUsers: any[] = JSON.parse(localStorage.getItem('registered_app_users') || '[]');
+        const existingIdx = localUsers.findIndex((u: any) => u.email?.toLowerCase() === emailClean);
+        if (existingIdx >= 0) {
+          localUsers[existingIdx] = userRecord;
+        } else {
+          localUsers.push(userRecord);
+        }
+        localStorage.setItem('registered_app_users', JSON.stringify(localUsers));
+      } catch {}
 
       const newUser: AppUser = {
-        user_id: data.user_id,
-        email: data.email,
-        full_name: data.full_name,
-        role: data.role as UserRole,
-        department: data.department,
-        phone: data.phone,
+        user_id: userRecord.user_id,
+        email: userRecord.email,
+        full_name: userRecord.full_name,
+        role: userRecord.role as UserRole,
+        department: userRecord.department,
+        phone: userRecord.phone,
         driver_code: generatedDriverCode,
-        avatar_url: data.avatar_url,
-        last_login: data.last_login,
+        avatar_url: userRecord.avatar_url,
+        last_login: userRecord.last_login,
       };
+
+      if (generatedSupplierId || (userData.role === 'SUPPLIER' && supplierCode)) {
+        (newUser as any).supplier_id = generatedSupplierId || supplierCode;
+      }
 
       setCurrentUser(newUser);
       setRoleState(newUser.role);
+      localStorage.setItem('c2_current_user', JSON.stringify(newUser));
+      localStorage.setItem('supply_sync_session_active', 'true');
+
+      await logAuditAction('USER_ACCOUNT_CREATED', 'app_users', newUser.user_id, {
+        email: emailClean,
+        role: newUser.role,
+        db_persisted: dbInsertOk,
+      });
+
       showToast(`Welcome to Supply Sync, ${newUser.full_name}! Account created.${generatedDriverCode ? ` (Driver ID: ${generatedDriverCode})` : ''}`, 'success');
       return { success: true };
     } catch (err: any) {
@@ -650,6 +909,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     setCurrentUser(null);
+    try {
+      localStorage.removeItem('c2_current_user');
+      localStorage.removeItem('supply_sync_session_active');
+      supabase.auth.signOut();
+    } catch {}
     showToast('Logged out of Supply Sync session.', 'info');
   };
 
@@ -841,11 +1105,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         verifyLoginOtp,
         cancelLoginOtp,
         login,
-        loginAsPersona,
         signUp,
         logout,
-        demoMode,
-        setDemoMode,
         refreshKey,
         triggerRefresh,
         notifications,

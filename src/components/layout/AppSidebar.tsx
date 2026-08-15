@@ -116,6 +116,12 @@ export const AppSidebar: React.FC = () => {
               icon: Package,
               allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'WORKER', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER'],
             },
+            {
+              title: 'Warehouses & Plants',
+              path: '/warehouses',
+              icon: Building2,
+              allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER'],
+            },
           ],
         },
         {
@@ -155,7 +161,7 @@ export const AppSidebar: React.FC = () => {
               title: 'Quality Check (QC)',
               path: '/quality',
               icon: Shield,
-              badge: '5-PILLAR',
+              badge: '8-FACTOR',
               badgeColor: 'bg-indigo-500 text-white',
               allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'RECEIVING_QC', 'RECEIVING_QC_OPERATOR', 'RECEIVING_OPERATOR', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER'],
             },

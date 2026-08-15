@@ -100,7 +100,7 @@ const ROLE_QUICK_LINKS: Record<UserRole, { label: string; path: string; color: s
   ],
   RECEIVING_QC: [
     { label: 'Goods Receipts (GRN)', path: '/grn', color: 'text-purple-600' },
-    { label: '5-Pillar Quality Check', path: '/quality', color: 'text-indigo-600' },
+    { label: '8-Factor Quality Check', path: '/quality', color: 'text-indigo-600' },
     { label: 'Dock Unloading Bays', path: '/yard', color: 'text-emerald-600' },
   ],
   RECEIVING_QC_OPERATOR: [

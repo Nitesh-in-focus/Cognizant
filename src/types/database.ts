@@ -7,8 +7,32 @@ export interface Supplier {
   phone?: string;
   address?: string;
   city: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'PENDING';
+  state?: string;
+  gstin?: string;
+  rating?: number;
+  status: 'ACTIVE' | 'APPROVED' | 'INACTIVE' | 'REMOVED' | 'PENDING';
+  removal_reason?: string;
+  removed_at?: string;
+  removed_by?: string;
+  origin_location_id?: string;
   created_at?: string;
+}
+
+export interface Location {
+  location_id: string;
+  supplier_id?: string;
+  warehouse_id?: string;
+  name: string;
+  type: 'SUPPLIER_FACILITY' | 'DISPATCH_DOCK' | 'CENTRAL_WAREHOUSE' | 'PLANT';
+  formatted_address: string;
+  latitude: number;
+  longitude: number;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Product {
@@ -31,6 +55,7 @@ export interface Warehouse {
   total_docks: number;
   latitude?: number;
   longitude?: number;
+  location_id?: string;
   status?: string;
 }
 
@@ -178,6 +203,7 @@ export interface Shipment {
 export interface DriverAssignmentRequest {
   request_id: string;
   shipment_id: string;
+  po_id?: string;
   driver_id: string;
   driver_code?: string;
   driver_name?: string;
@@ -185,6 +211,12 @@ export interface DriverAssignmentRequest {
   truck_id?: string;
   vehicle_number?: string;
   supplier_id: string;
+  supplier_name?: string;
+  offered_amount?: number;
+  origin?: string;
+  destination?: string;
+  distance_km?: number;
+  ai_eta_hours?: number;
   sent_at: string;
   expires_at: string;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
@@ -555,3 +587,35 @@ export interface StatusHistory {
   timestamp: string;
   metadata?: any;
 }
+
+export interface PoEditHistory {
+  edit_id: string;
+  po_id: string;
+  editor_user_id?: string;
+  editor_name: string;
+  editor_role: string;
+  field_changed: string;
+  previous_value: string | number;
+  new_value: string | number;
+  reason?: string;
+  timestamp: string;
+  created_at?: string;
+}
+
+export interface NotificationDeliveryLog {
+  notification_id: string;
+  event_type: string;
+  recipient_user_id?: string;
+  recipient_role?: string;
+  recipient_email: string;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  channel: 'EMAIL' | 'IN_APP' | 'SMS';
+  delivery_status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'FAILED';
+  provider_message_id?: string;
+  sent_at?: string;
+  failed_at?: string;
+  failure_reason?: string;
+  created_at?: string;
+}
+

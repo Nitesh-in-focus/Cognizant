@@ -2,407 +2,340 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers,
-  ShieldCheck,
   Lock,
   Mail,
   User,
-  Building,
   Phone,
   ArrowRight,
   Sparkles,
   CheckCircle2,
   AlertTriangle,
   Truck,
-  Boxes,
   Receipt,
-  CreditCard,
   Eye,
   EyeOff,
-  Radio,
-  FileText,
+  Building2,
+  KeyRound,
+  ShieldCheck,
+  Check,
 } from 'lucide-react';
-import { useApp, UserRole, defaultPersonaUsers } from '../contexts/AppContext';
+import { useApp, UserRole } from '../contexts/AppContext';
 
 export const Auth: React.FC = () => {
   const navigate = useNavigate();
-  const { login, signUp, loginAsPersona } = useApp();
+  const { login, signUp } = useApp();
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<UserRole>('PROCUREMENT_OFFICER');
-  const [department, setDepartment] = useState('Strategic Sourcing');
-  const [phone, setPhone] = useState('+91 98200 11000');
+  const [role, setRole] = useState<UserRole>('WORKER');
+  const [department, setDepartment] = useState('Shop Floor & Assembly');
+  const [phone, setPhone] = useState('');
 
-  const personas = [
-    {
-      role: 'WORKER' as UserRole,
-      title: 'Shop Floor Worker',
-      name: defaultPersonaUsers.WORKER.full_name,
-      email: defaultPersonaUsers.WORKER.email,
-      dept: 'Shop Floor & Assembly Operations',
-      icon: Sparkles,
-      color: 'bg-indigo-600',
-      badge: 'PR Creator',
-      desc: 'Create natural-language Purchase Requisitions with Gemini AI NLP extraction.',
-    },
-    {
-      role: 'PROCUREMENT_OFFICER' as UserRole,
-      title: 'Procurement Officer',
-      name: defaultPersonaUsers.PROCUREMENT_OFFICER.full_name,
-      email: defaultPersonaUsers.PROCUREMENT_OFFICER.email,
-      dept: 'Strategic Sourcing & Purchasing',
-      icon: FileText,
-      color: 'bg-amber-600',
-      badge: 'PR & PO Lead',
-      desc: 'Approve PRs, monitor AI supplier ranking, review/edit and transmit POs.',
-    },
-    {
-      role: 'SUPPLIER' as UserRole,
-      title: 'Supplier Partner',
-      name: defaultPersonaUsers.SUPPLIER.full_name,
-      email: defaultPersonaUsers.SUPPLIER.email,
-      dept: 'Tata Industrial Solutions Ltd',
-      icon: Building,
-      color: 'bg-orange-600',
-      badge: 'Supplier Portal',
-      desc: 'Accept/reject POs, dispatch ASNs, request driver assignment, and submit invoices.',
-    },
-    {
-      role: 'TRUCK_DRIVER' as UserRole,
-      title: 'Carrier Fleet Driver',
-      name: defaultPersonaUsers.TRUCK_DRIVER.full_name,
-      email: defaultPersonaUsers.TRUCK_DRIVER.email,
-      dept: 'BlueDart Logistics Fleet (ID: DRV-2026-9901)',
-      icon: Truck,
-      color: 'bg-cyan-600',
-      badge: 'Driver App',
-      desc: 'Accept trips, live GPS telematics beacon, travel distance, and dock status.',
-    },
-    {
-      role: 'LOGISTICS_GATE_POST' as UserRole,
-      title: 'Logistics & Gate Post',
-      name: defaultPersonaUsers.LOGISTICS_GATE_POST.full_name,
-      email: defaultPersonaUsers.LOGISTICS_GATE_POST.email,
-      dept: 'Inbound Logistics, Facility Gate & Docks',
-      icon: Radio,
-      color: 'bg-sky-600',
-      badge: 'Logistics & Gate',
-      desc: 'Highway corridor monitoring, gate check-in, parking/dock allocation & telematics.',
-    },
-    {
-      role: 'RECEIVING_QC' as UserRole,
-      title: 'Receiving + QC Lead',
-      name: defaultPersonaUsers.RECEIVING_QC.full_name,
-      email: defaultPersonaUsers.RECEIVING_QC.email,
-      dept: 'Dock Receiving & Quality Assurance',
-      icon: ShieldCheck,
-      color: 'bg-purple-600',
-      badge: 'GRN & QC Intake',
-      desc: 'Complete unloading, NLP/manual GRN intake, and 5-pillar Quality Checks.',
-    },
-    {
-      role: 'FINANCE' as UserRole,
-      title: 'Financial Controller',
-      name: defaultPersonaUsers.FINANCE.full_name,
-      email: defaultPersonaUsers.FINANCE.email,
-      dept: 'Accounts Payable & Audit',
-      icon: CreditCard,
-      color: 'bg-emerald-600',
-      badge: '3-Way Match & Pay',
-      desc: 'Invoice AI OCR, PO+GRN+Invoice 3-way match, payment holds, and settlement.',
-    },
-    {
-      role: 'SYSTEM_ADMIN' as UserRole,
-      title: 'System Administrator',
-      name: defaultPersonaUsers.SYSTEM_ADMIN.full_name,
-      email: defaultPersonaUsers.SYSTEM_ADMIN.email,
-      dept: 'Technical Architecture & Security',
-      icon: Layers,
-      color: 'bg-slate-700',
-      badge: 'System Admin',
-      desc: 'Technical infrastructure, audit logging, emergency overrides and system health.',
-    },
-  ];
+  // Supplier-specific fields
+  const [supplierName, setSupplierName] = useState('');
+  const [supplierCity, setSupplierCity] = useState('');
 
-  const [otpInput, setOtpInput] = useState('');
-  const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
+  // Driver-specific fields
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [carrierName, setCarrierName] = useState('');
 
-  const { pendingOtpEmail, otpCooldownSeconds, requestLoginOtp, verifyLoginOtp, cancelLoginOtp } = useApp();
+  // Automatic department assignment based on the 7 canonical roles
+  const handleRoleChange = (newRole: UserRole) => {
+    setRole(newRole);
+    setErrorMessage('');
 
-  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+    switch (newRole) {
+      case 'WORKER':
+        setDepartment('Shop Floor & Assembly Operations');
+        break;
+      case 'PROCUREMENT_OFFICER':
+        setDepartment('Strategic Sourcing & Procurement');
+        break;
+      case 'SUPPLIER':
+        setDepartment('Certified Component Manufacturing');
+        break;
+      case 'TRUCK_DRIVER':
+        setDepartment('Carrier Fleet Highway Transit');
+        break;
+      case 'LOGISTICS_GATE_POST':
+        setDepartment('Inbound Facility Gate & Yard');
+        break;
+      case 'RECEIVING_QC':
+        setDepartment('Dock Receiving Intake & Quality Assurance');
+        break;
+      case 'FINANCE':
+        setDepartment('Financial Controller & Accounts Payable');
+        break;
+      default:
+        setDepartment('Supply Chain Operations');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setSuccessMessage('');
     setLoading(true);
 
     try {
       if (isSignUp) {
-        if (!fullName || !email || !password) {
+        if (!fullName.trim() || !email.trim() || !password.trim()) {
           setErrorMessage('Please fill in all required fields.');
           setLoading(false);
           return;
         }
 
+        if (password.length < 6) {
+          setErrorMessage('Password must be at least 6 characters in length.');
+          setLoading(false);
+          return;
+        }
+
+        if (password !== confirmPassword) {
+          setErrorMessage('Passwords do not match. Please verify and re-enter.');
+          setLoading(false);
+          return;
+        }
+
+        const generatedSupplierCode = role === 'SUPPLIER'
+          ? `SUP-${Math.floor(1000 + Math.random() * 9000)}`
+          : undefined;
+
+        const generatedDriverCode = role === 'TRUCK_DRIVER'
+          ? `DRV-2026-${Math.floor(1000 + Math.random() * 9000)}`
+          : undefined;
+
         const res = await signUp({
-          full_name: fullName,
-          email,
+          full_name: fullName.trim(),
+          email: email.trim().toLowerCase(),
           password,
           role,
           department,
-          phone,
+          phone: phone.trim() || undefined,
+          supplier_name: role === 'SUPPLIER' ? (supplierName.trim() || `${fullName.trim()} Enterprise`) : undefined,
+          supplier_code: generatedSupplierCode,
+          vehicle_number: role === 'TRUCK_DRIVER' ? (vehicleNumber.trim() || undefined) : undefined,
+          carrier_name: role === 'TRUCK_DRIVER' ? (carrierName.trim() || undefined) : undefined,
+          driver_code: generatedDriverCode,
         });
 
-        if (!res.success) {
-          setErrorMessage(res.error || 'Sign up failed.');
-          setLoading(false);
-          return;
+        if (res.success) {
+          setSuccessMessage('Account created successfully! Signing in...');
+          setTimeout(() => {
+            navigate('/');
+          }, 800);
+        } else {
+          setErrorMessage(res.error || 'Failed to create account.');
         }
-        navigate('/');
       } else {
-        if (!email || !password) {
-          setErrorMessage('Please enter email and password.');
+        if (!email.trim() || !password.trim()) {
+          setErrorMessage('Please enter both email and password.');
           setLoading(false);
           return;
         }
 
-        // Section 1 of updates2.md: Every login requires OTP verification
-        const otpRes = await requestLoginOtp(email);
-        if (!otpRes.success) {
-          setErrorMessage(otpRes.error || 'Failed to dispatch verification code.');
-          setLoading(false);
-          return;
-        }
-        if (otpRes.devOtp) {
-          setDevOtpHint(otpRes.devOtp);
+        const res = await login(email.trim().toLowerCase(), password);
+        if (res.success) {
+          navigate('/');
+        } else {
+          setErrorMessage(res.error || 'Invalid email or password.');
         }
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Authentication error.');
+      setErrorMessage(err.message || 'Authentication failed. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePersonaQuickLogin = async (selectedRole: UserRole) => {
-    setLoading(true);
-    setErrorMessage('');
-    const targetPersona = defaultPersonaUsers[selectedRole];
-    if (targetPersona) {
-      const otpRes = await requestLoginOtp(targetPersona.email);
-      if (otpRes.devOtp) {
-        setDevOtpHint(otpRes.devOtp);
-      }
-    }
-    setLoading(false);
-  };
-
-  const handleOtpVerifySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pendingOtpEmail) return;
-    setLoading(true);
-    setErrorMessage('');
-
-    const res = await verifyLoginOtp(pendingOtpEmail, otpInput);
-    setLoading(false);
-
-    if (res.success) {
-      setOtpInput('');
-      setDevOtpHint(null);
-      // Route based on role
-      const persona = Object.values(defaultPersonaUsers).find(
-        (p) => p.email.toLowerCase() === pendingOtpEmail.toLowerCase()
-      );
-      if (persona?.role === 'SUPPLIER') {
-        navigate('/supplier');
-      } else if (persona?.role === 'TRUCK_DRIVER') {
-        navigate('/driver');
-      } else {
-        navigate('/');
-      }
-    } else {
-      setErrorMessage(res.error || 'Invalid OTP verification code.');
-    }
-  };
+  const featurePillars = [
+    {
+      icon: Sparkles,
+      title: 'AI Requisition & Natural Language PR',
+      desc: 'Converts unstructured shop-floor needs into compliant purchase requisitions.',
+    },
+    {
+      icon: Truck,
+      title: 'Highway GPS Fleet Telematics',
+      desc: 'Real-time transit tracking, geofence check-ins, and dock schedule synchronization.',
+    },
+    {
+      icon: Receipt,
+      title: 'Automated 3-Way Match & OCR',
+      desc: 'Precision PO, GRN, and invoice reconciliation with variance protection.',
+    },
+    {
+      icon: Layers,
+      title: 'Complete 15-Stage Traceability',
+      desc: 'End-to-end chain of custody from initial requisition to bank settlement.',
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-[#0B1120] text-slate-100 flex flex-col justify-between selection:bg-blue-600 selection:text-white">
-      {/* Top Brand Bar */}
+      {/* Top Brand Header */}
       <header className="h-16 border-b border-slate-800/80 px-6 sm:px-12 flex items-center justify-between bg-[#0F172A]/70 backdrop-blur-md sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
             <Layers className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-sm font-black tracking-wider text-white">
-              SUPPLY SYNC
+            <div className="text-sm font-black tracking-wider text-white flex items-center gap-2">
+              <span>SUPPLY SYNC</span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                ENTERPRISE
+              </span>
             </div>
             <div className="text-[10px] text-slate-400 font-medium">
-              Autonomous Supply Chain Intelligence & Control
+              Autonomous Supply Chain Intelligence & Operations
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Supabase Live DB Connected</span>
-          </div>
+        <div className="flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Production Database Active</span>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12 flex flex-col justify-center">
-        {/* Welcoming Header (Sections 1-4) */}
-        <div className="text-center max-w-2xl mx-auto mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold mb-3">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Multi-Persona Role-Aware Architecture</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
-            Supply Chain Operations Hub
-          </h1>
-          <p className="text-sm text-slate-400 mt-2 leading-relaxed">
-            Welcome to the Supply Sync Portal. Select a verified operational persona for instant 1-click access, or sign in with your corporate credentials.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Left Column: 1-Click Persona Quick Logins (7 cols) */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-blue-400" />
-                <span>1-Click Persona Access (Demo Testing)</span>
-              </h2>
-              <span className="text-[11px] text-slate-400">
-                Click any role to launch with tailored view
-              </span>
+      {/* Main Hero & Auth Section */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12 flex items-center justify-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center w-full">
+          {/* Left Column: Platform Capabilities Showcase */}
+          <div className="lg:col-span-7 space-y-6">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Real-Time Autonomous Supply Chain System</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {personas.map((p) => {
-                const Icon = p.icon;
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight leading-tight">
+              Procurement & Logistics Intelligence Platform
+            </h1>
+
+            <p className="text-sm text-slate-400 leading-relaxed max-w-xl">
+              Enterprise workflow coordinating Workers, PR Officers, Certified Suppliers, Carrier Fleet Drivers, Logistics & Gate Posts, Receiving QC Leads, and Financial Controllers.
+            </p>
+
+            {/* Feature Highlights Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              {featurePillars.map((feat, i) => {
+                const Icon = feat.icon;
                 return (
                   <div
-                    key={p.role}
-                    onClick={() => handlePersonaQuickLogin(p.role)}
-                    className="p-4 rounded-xl border border-slate-800 bg-[#0F172A]/80 hover:bg-[#1E293B] hover:border-blue-500/50 cursor-pointer transition-all duration-200 group flex flex-col justify-between shadow-sm hover:shadow-md hover:shadow-blue-500/5"
+                    key={i}
+                    className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col justify-between hover:border-slate-700 transition-colors"
                   >
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className={`p-2 rounded-lg ${p.color} text-white shadow-xs`}>
-                            <Icon className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-white group-hover:text-blue-400 transition-colors">
-                              {p.title}
-                            </div>
-                            <div className="text-[10px] text-slate-400">{p.name}</div>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                          {p.badge}
-                        </span>
+                    <div className="flex items-center gap-2.5 mb-1.5">
+                      <div className="p-2 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30">
+                        <Icon className="w-4 h-4" />
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-snug mb-3">
-                        {p.desc}
-                      </p>
+                      <span className="text-xs font-bold text-white">{feat.title}</span>
                     </div>
-
-                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-semibold text-blue-400 group-hover:text-blue-300">
-                      <span>Launch Role Portal</span>
-                      <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
-                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">{feat.desc}</p>
                   </div>
                 );
               })}
             </div>
-
-            {/* Security Guarantee Banner */}
-            <div className="p-4 rounded-xl border border-slate-800/80 bg-slate-900/40 text-xs text-slate-400 flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-semibold text-slate-200 block mb-0.5">
-                  Enterprise Security & Privacy Architecture
-                </span>
-                <span>
-                  PostgreSQL Row-Level Security (RLS) active with deterministic foreign key validation, audit trails, and 256-bit TLS data transmission.
-                </span>
-              </div>
-            </div>
           </div>
 
-          {/* Right Column: Credentials Login / Sign Up Form (5 cols) */}
-          <div className="lg:col-span-5 bg-[#0F172A] rounded-2xl border border-slate-800 p-6 sm:p-7 shadow-xl">
-            {/* Form Mode Toggle */}
-            <div className="flex rounded-xl bg-slate-900/80 p-1 border border-slate-800 mb-6">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(false);
-                  setErrorMessage('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  !isSignUp
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(true);
-                  setErrorMessage('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  isSignUp
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Create Account
-              </button>
+          {/* Right Column: Unified Login & Registration Form */}
+          <div className="lg:col-span-5 bg-[#0F172A] rounded-2xl border border-slate-700/80 p-6 sm:p-7 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/10 rounded-full blur-2xl pointer-events-none" />
+
+            {/* Card Header & Tabs */}
+            <div className="mb-5">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-extrabold text-white tracking-wide">
+                      {isSignUp ? 'CREATE YOUR ACCOUNT' : 'SIGN IN'}
+                    </h2>
+                    <p className="text-[11px] text-slate-400">
+                      {isSignUp
+                        ? 'Select your operational role to get started'
+                        : 'Sign in to access your role-based dashboard'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tab Switcher */}
+              <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(false);
+                    setErrorMessage('');
+                    setSuccessMessage('');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    !isSignUp
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(true);
+                    setErrorMessage('');
+                    setSuccessMessage('');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    isSignUp
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Sign Up
+                </button>
+              </div>
             </div>
 
-            <div className="mb-4">
-              <h3 className="text-base font-bold text-white">
-                {isSignUp ? 'Register New Operational User' : 'Corporate Account Sign In'}
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {isSignUp
-                  ? 'Create your role profile in the Supabase database'
-                  : 'Enter your corporate credentials to sign in'}
-              </p>
-            </div>
-
+            {/* Error Message Alert */}
             {errorMessage && (
-              <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{errorMessage}</span>
+              <div className="mb-3.5 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span className="leading-tight">{errorMessage}</span>
               </div>
             )}
 
-            <form onSubmit={handleCredentialsSubmit} className="space-y-3.5 text-xs">
+            {/* Success Message Alert */}
+            {successMessage && (
+              <div className="mb-3.5 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{successMessage}</span>
+              </div>
+            )}
+
+            {/* Authentication Form */}
+            <form onSubmit={handleSubmit} className="space-y-3 text-xs">
               {isSignUp && (
                 <div>
                   <label className="font-semibold text-slate-300 block mb-1">
-                    Full Name
+                    Full Legal Name
                   </label>
                   <div className="relative">
-                    <User className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Ramesh Chandra"
+                      placeholder="e.g. Ramesh Patil"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
@@ -413,14 +346,14 @@ export const Auth: React.FC = () => {
 
               <div>
                 <label className="font-semibold text-slate-300 block mb-1">
-                  Corporate Email Address
+                  Email Address
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                  <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
                     type="email"
                     required
-                    placeholder="user@supplysync.io"
+                    placeholder="e.g. ramesh@supplysync.io"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
@@ -433,7 +366,7 @@ export const Auth: React.FC = () => {
                   Password
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                  <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
@@ -445,9 +378,9 @@ export const Auth: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
@@ -456,179 +389,247 @@ export const Auth: React.FC = () => {
                 <>
                   <div>
                     <label className="font-semibold text-slate-300 block mb-1">
-                      Assigned Operational Role
+                      Confirm Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        required
+                        placeholder="••••••••"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full pl-9 pr-10 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Exactly Seven Canonical Operational Roles */}
+                  <div>
+                    <label className="font-semibold text-slate-300 block mb-1">
+                      Select Role
                     </label>
                     <select
                       value={role}
-                      onChange={(e) => setRole(e.target.value as UserRole)}
+                      onChange={(e) => handleRoleChange(e.target.value as UserRole)}
                       className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
                     >
-                      <option value="WORKER">1. Worker (Shop Floor Requisitions)</option>
-                      <option value="PROCUREMENT_OFFICER">2. Procurement Officer (PR Approval & AI POs)</option>
-                      <option value="SUPPLIER">3. Supplier (PO Response & Shipments)</option>
-                      <option value="TRUCK_DRIVER">4. Truck Driver (Highway GPS & Trips)</option>
-                      <option value="LOGISTICS_GATE_POST">5. Logistics & Gate Post (Gate, Yard & Docks)</option>
-                      <option value="RECEIVING_QC">6. Receiving + QC (GRN Intake & Quality Check)</option>
-                      <option value="FINANCE">7. Finance (3-Way Match & Settlements)</option>
-                      <option value="SYSTEM_ADMIN">8. System Administrator (Technical Admin)</option>
+                      <option value="WORKER">1. Worker</option>
+                      <option value="PROCUREMENT_OFFICER">2. PR Officer</option>
+                      <option value="SUPPLIER">3. Supplier</option>
+                      <option value="TRUCK_DRIVER">4. Carrier Fleet Driver</option>
+                      <option value="LOGISTICS_GATE_POST">5. Logistics & Gate Post</option>
+                      <option value="RECEIVING_QC">6. Receiver & QC Lead</option>
+                      <option value="FINANCE">7. Finance Controller</option>
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="font-semibold text-slate-300 block mb-1">
-                        Department
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Sourcing"
-                        value={department}
-                        onChange={(e) => setDepartment(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
-                      />
+                  {/* Supplier-Specific Dynamic Fields */}
+                  {role === 'SUPPLIER' && (
+                    <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 space-y-2">
+                      <div className="flex items-center gap-1.5 text-orange-400 font-bold text-[11px]">
+                        <Building2 className="w-3.5 h-3.5" />
+                        <span>Supplier Business Information</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label htmlFor="reg-sup-name" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                            Company Name
+                          </label>
+                          <input
+                            id="reg-sup-name"
+                            type="text"
+                            placeholder="e.g. Apex Industrial Solutions"
+                            value={supplierName}
+                            onChange={(e) => setSupplierName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="reg-sup-city" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                            City / Sourcing Hub
+                          </label>
+                          <input
+                            id="reg-sup-city"
+                            type="text"
+                            placeholder="e.g. Mumbai Hub"
+                            value={supplierCity}
+                            onChange={(e) => setSupplierCity(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="reg-sup-phone" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                          Business Contact Phone <span className="text-orange-400">*</span>
+                        </label>
+                        <input
+                          id="reg-sup-phone"
+                          type="tel"
+                          placeholder="+91 98200 11000"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                        />
+                      </div>
+                      <span className="text-[10px] text-orange-300 block">
+                        A unique <strong>Supplier ID</strong> (e.g. SUP-XXXX) will be generated and linked to all your POs, shipments, and invoices.
+                      </span>
                     </div>
-                    <div>
-                      <label className="font-semibold text-slate-300 block mb-1">
-                        Phone
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="+91 98000"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
-                      />
+                  )}
+
+                  {/* Driver-Specific Dynamic Fields */}
+                  {role === 'TRUCK_DRIVER' && (
+                    <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-2">
+                      <div className="flex items-center gap-1.5 text-cyan-400 font-bold text-[11px]">
+                        <Truck className="w-3.5 h-3.5" />
+                        <span>Carrier Fleet Driver Information</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label htmlFor="reg-drv-veh" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                            Assigned Vehicle Number
+                          </label>
+                          <input
+                            id="reg-drv-veh"
+                            type="text"
+                            placeholder="e.g. MH-12-AB-9901"
+                            value={vehicleNumber}
+                            onChange={(e) => setVehicleNumber(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="reg-drv-carrier" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                            Carrier Fleet Name
+                          </label>
+                          <input
+                            id="reg-drv-carrier"
+                            type="text"
+                            placeholder="e.g. BlueDart Logistics"
+                            value={carrierName}
+                            onChange={(e) => setCarrierName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="reg-drv-phone" className="font-medium text-slate-300 block mb-0.5 text-[11px]">
+                          Driver Operational Phone <span className="text-cyan-400">*</span>
+                        </label>
+                        <input
+                          id="reg-drv-phone"
+                          type="tel"
+                          placeholder="+91 98234 56789"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:outline-hidden focus:border-blue-500"
+                        />
+                      </div>
+                      <span className="text-[10px] text-cyan-300 block">
+                        A unique <strong>Driver ID</strong> (e.g. DRV-2026-XXXX) will be generated for carrier dispatch and highway transit.
+                      </span>
                     </div>
-                  </div>
+                  )}
+
+                  {role !== 'SUPPLIER' && role !== 'TRUCK_DRIVER' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label htmlFor="reg-dept" className="font-semibold text-slate-300 block mb-1">
+                          Department
+                        </label>
+                        <input
+                          id="reg-dept"
+                          type="text"
+                          placeholder="e.g. Operations"
+                          value={department}
+                          onChange={(e) => setDepartment(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="reg-phone" className="font-semibold text-slate-300 block mb-1">
+                          Contact Phone Number
+                        </label>
+                        <input
+                          id="reg-phone"
+                          type="tel"
+                          placeholder="+91 98000 12345"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full mt-3 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>{loading ? 'Authenticating...' : isSignUp ? 'Create User Profile' : 'Sign In to Supply Sync'}</span>
+                <span>
+                  {loading
+                    ? 'Authenticating...'
+                    : isSignUp
+                    ? 'Create Account'
+                    : 'Sign In'}
+                </span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
-
-              {!isSignUp && (
-                <div className="text-center pt-2">
-                  <span className="text-[11px] text-slate-400">
-                    Test credentials: <code className="text-blue-400">admin@supplysync.io</code> / <code className="text-blue-400">admin123</code>
-                  </span>
-                </div>
-              )}
             </form>
-          </div>
-        </div>
 
-        {/* 2-Factor Email OTP Verification Modal Overlay */}
-        {pendingOtpEmail && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-100 relative">
-              <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto mb-4">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-
-              <h2 className="text-xl font-bold text-center text-white">Two-Factor Authentication</h2>
-              <p className="text-xs text-slate-400 text-center mt-1.5 leading-relaxed">
-                A 6-digit verification code has been dispatched to your registered corporate email:
-              </p>
-              <div className="mt-2 text-center">
-                <span className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-xs font-semibold text-blue-400">
-                  {pendingOtpEmail}
-                </span>
-              </div>
-
-              {errorMessage && (
-                <div className="mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {devOtpHint && (
-                <div className="mt-3 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Demo Dispatch Code: <strong>{devOtpHint}</strong></span>
-                  </div>
+            <div className="mt-4 pt-3 border-t border-slate-800/80 text-[11px] text-slate-400 text-center">
+              {isSignUp ? (
+                <span>
+                  Already have an account?{' '}
                   <button
-                    type="button"
-                    onClick={() => setOtpInput(devOtpHint)}
-                    className="text-[11px] font-bold underline hover:text-emerald-300 ml-2 cursor-pointer"
-                  >
-                    Auto-Fill
-                  </button>
-                </div>
-              )}
-
-              <form onSubmit={handleOtpVerifySubmit} className="mt-5 space-y-4">
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block text-center mb-2 uppercase tracking-wider">
-                    Enter 6-Digit OTP
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    autoFocus
-                    placeholder="000000"
-                    value={otpInput}
-                    onChange={(e) => setOtpInput(e.target.value.replace(/[^0-9]/g, ''))}
-                    className="w-full text-center tracking-[0.5em] text-2xl font-mono py-3 bg-slate-950 border border-slate-700 rounded-xl text-white font-bold focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                  <span>Code expires in 5:00</span>
-                  <button
-                    type="button"
-                    disabled={otpCooldownSeconds > 0}
-                    onClick={() => requestLoginOtp(pendingOtpEmail)}
-                    className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 font-semibold"
-                  >
-                    {otpCooldownSeconds > 0 ? `Resend code in ${otpCooldownSeconds}s` : 'Resend Code'}
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    type="button"
                     onClick={() => {
-                      cancelLoginOtp();
+                      setIsSignUp(false);
                       setErrorMessage('');
-                      setOtpInput('');
-                      setDevOtpHint(null);
                     }}
-                    className="w-1/3 py-2.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-800 text-slate-300 font-bold text-xs transition-colors"
+                    className="text-blue-400 font-bold hover:underline cursor-pointer"
                   >
-                    Cancel
+                    Sign In
                   </button>
+                </span>
+              ) : (
+                <span>
+                  Don't have an account?{' '}
                   <button
-                    type="submit"
-                    disabled={loading || otpInput.length < 6}
-                    className="w-2/3 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                    onClick={() => {
+                      setIsSignUp(true);
+                      setErrorMessage('');
+                    }}
+                    className="text-blue-400 font-bold hover:underline cursor-pointer"
                   >
-                    <span>{loading ? 'Verifying...' : 'Verify & Launch Session'}</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    Create Account
                   </button>
-                </div>
-              </form>
+                </span>
+              )}
             </div>
           </div>
-        )}
+        </div>
       </main>
 
-      {/* Footer Status Bar */}
+      {/* Footer */}
       <footer className="h-12 border-t border-slate-800/80 px-6 sm:px-12 flex items-center justify-between text-[11px] text-slate-500 bg-[#0B1120]">
         <span>© 2026 Supply Sync — Autonomous Supply Chain Intelligence Platform</span>
         <div className="flex items-center gap-4">
           <span>PostgreSQL v16</span>
           <span>•</span>
-          <span>Tailwind v4</span>
+          <span>Tailwind CSS</span>
           <span>•</span>
-          <span>Supply Sync v4.0</span>
+          <span>Supply Sync v8.0</span>
         </div>
       </footer>
     </div>

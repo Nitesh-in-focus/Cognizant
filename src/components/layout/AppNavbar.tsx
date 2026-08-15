@@ -38,8 +38,6 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
     role,
     setRole,
     logout,
-    demoMode,
-    setDemoMode,
     notifications,
     unreadAlertsCount,
     markAllAlertsAsRead,
@@ -79,17 +77,6 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
     FINANCE_MANAGER: { label: 'Financial Controller', badge: 'Finance' },
     WAREHOUSE_MANAGER: { label: 'Receiving + QC Lead', badge: 'Receiving + QC' },
   };
-
-  const primaryRoles: UserRole[] = [
-    'WORKER',
-    'PROCUREMENT_OFFICER',
-    'SUPPLIER',
-    'TRUCK_DRIVER',
-    'LOGISTICS_GATE_POST',
-    'RECEIVING_QC',
-    'FINANCE',
-    'SYSTEM_ADMIN',
-  ];
 
   const handleLogout = () => {
     logout();
@@ -142,28 +129,11 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
           <span>Traceability</span>
         </button>
 
-        {/* 1-Click Demo Wizard Trigger */}
-        <button
-          onClick={onOpenScenarioRunner}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs"
-        >
-          <PlayCircle className="w-3.5 h-3.5" />
-          <span>Demo Scenarios</span>
-        </button>
-
-        {/* Demo Mode Toggle Badge */}
-        <button
-          onClick={() => setDemoMode(!demoMode)}
-          className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-            demoMode
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-              : 'bg-slate-100 text-slate-600 border-slate-200'
-          }`}
-          title="Toggle Synthetic Demo Telemetry"
-        >
-          <Zap className="w-3.5 h-3.5" />
-          <span>{demoMode ? 'Demo Active' : 'Live Mode'}</span>
-        </button>
+        {/* Live System Status */}
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold shadow-2xs">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>LIVE PIPELINE</span>
+        </div>
 
         {/* Unread Alerts Dropdown */}
         <div className="relative">
@@ -269,14 +239,14 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
             className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-left"
           >
             <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
-              {currentUser?.full_name?.charAt(0) || 'V'}
+              {currentUser?.full_name?.charAt(0) || 'U'}
             </div>
             <div className="hidden lg:block text-xs leading-none">
               <div className="font-bold text-slate-900">
-                {currentUser?.full_name || 'Vikramaditya Rao'}
+                {currentUser?.full_name || 'Active User'}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                {roleLabels[role]?.badge || 'Admin'}
+                {roleLabels[role]?.badge || 'User'}
               </div>
             </div>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -284,42 +254,36 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
 
           {openRoleMenu && (
             <div className="absolute right-0 mt-2 w-64 rounded-xl bg-white border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in slide-in-from-top-2">
-              <div className="px-3.5 py-2 border-b border-slate-100">
+              <div className="px-3.5 py-2.5 border-b border-slate-100">
                 <div className="font-bold text-xs text-slate-900">{currentUser?.full_name}</div>
                 <div className="text-[11px] text-slate-500 truncate">{currentUser?.email}</div>
-                <div className="text-[10px] text-blue-600 font-semibold mt-0.5">{currentUser?.department}</div>
-              </div>
-
-              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Switch Operational Persona
-              </div>
-
-              {primaryRoles.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => {
-                    setRole(r);
-                    setOpenRoleMenu(false);
-                  }}
-                  className={`w-full text-left px-3.5 py-1.5 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors ${
-                    role === r ? 'font-bold text-blue-600 bg-blue-50/50' : 'text-slate-700'
-                  }`}
-                >
-                  <div>
-                    <div className="font-semibold">{roleLabels[r]?.badge}</div>
-                    <div className="text-[10px] text-slate-400">{roleLabels[r]?.label}</div>
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                    {roleLabels[role]?.badge || role}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-medium truncate">
+                    {currentUser?.department}
+                  </span>
+                </div>
+                {(currentUser as any)?.driver_code && (
+                  <div className="text-[10px] text-cyan-600 font-semibold mt-1">
+                    Driver ID: {(currentUser as any).driver_code}
                   </div>
-                  {role === r && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />}
-                </button>
-              ))}
+                )}
+                {(currentUser as any)?.supplier_id && (
+                  <div className="text-[10px] text-orange-600 font-semibold mt-1">
+                    Supplier ID: {(currentUser as any).supplier_id}
+                  </div>
+                )}
+              </div>
 
-              <div className="pt-2 mt-1 border-t border-slate-100 px-2">
+              <div className="pt-1.5 px-2">
                 <button
                   onClick={handleLogout}
-                  className="w-full text-left px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 transition-colors"
+                  className="w-full text-left px-2.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign Out / Lock Session</span>
+                  <span>Sign Out / Log Out</span>
                 </button>
               </div>
             </div>

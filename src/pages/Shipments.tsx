@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Truck,
   Navigation,
@@ -26,6 +27,7 @@ import {
   CreditCard,
   Barcode,
   Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -35,6 +37,7 @@ import { Modal } from '../components/common/Modal';
 import { getAiEtaPrediction, EtaPredictionResult } from '../services/ai/etaPredictionService';
 
 export const Shipments: React.FC = () => {
+  const navigate = useNavigate();
   const { refreshKey, triggerRefresh, showSnackbar } = useApp();
 
   const [shipments, setShipments] = useState<any[]>([]);
@@ -219,8 +222,17 @@ export const Shipments: React.FC = () => {
                 </tr>
               ) : filteredShipments.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
-                    No shipments found matching search criteria.
+                  <td colSpan={7} className="py-16 text-center text-slate-400">
+                    <Truck className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
+                    <span className="font-bold text-slate-700 block text-sm">No Active Highway Shipments yet</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">Accepted POs can be converted into shipments and ASNs by suppliers.</span>
+                    <button
+                      onClick={() => navigate('/purchase-orders')}
+                      className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <span>View Purchase Orders</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
                   </td>
                 </tr>
               ) : (

@@ -20,6 +20,11 @@ import {
   ArrowRight,
   ExternalLink,
   ShoppingCart,
+  Star,
+  Mail,
+  MapPin,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -38,9 +43,19 @@ export const PurchaseRequisitions: React.FC = () => {
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<'ALL' | 'MY_PRS' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'MY_PRS' | 'APPROVED' | 'REJECTED' | 'REMAINING'>('ALL');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('pr') || '');
   const [filterPriority, setFilterPriority] = useState('ALL');
+  const [approvingQty, setApprovingQty] = useState<number | null>(null);
+
+  // Helper to compute PR fulfillment metrics across all linked POs (Updates 10 Section 6)
+  const getPrFulfillmentMetrics = (pr: any) => {
+    const requestedQty = pr.pr_items?.reduce((sum: number, item: any) => sum + (Number(item.requested_quantity) || 0), 0) || 500;
+    const linkedPos = pr.purchase_orders || [];
+    const allocatedQty = linkedPos.reduce((sum: number, po: any) => sum + (Number(po.total_quantity || po.ordered_quantity) || 0), 0);
+    const remainingQty = Math.max(0, requestedQty - allocatedQty);
+    return { requestedQty, allocatedQty, remainingQty, poCount: linkedPos.length, linkedPos };
+  };
 
   useEffect(() => {
     const prParam = searchParams.get('pr');
@@ -182,12 +197,48 @@ export const PurchaseRequisitions: React.FC = () => {
         },
       ]);
 
+      // Section 3 of updates6.md: Log worker corrections to improve NLP extraction model
+      if (createMode === 'nlp' && extractedDraft) {
+        const corrections: Record<string, { ai: any; human: any }> = {};
+        if (extractedDraft.quantity !== newPr.quantity) {
+          corrections['quantity'] = { ai: extractedDraft.quantity, human: newPr.quantity };
+        }
+        if (extractedDraft.product_id !== newPr.product_id) {
+          corrections['product_id'] = { ai: extractedDraft.product_id, human: newPr.product_id };
+        }
+        if (extractedDraft.required_date !== newPr.required_date) {
+          corrections['required_date'] = { ai: extractedDraft.required_date, human: newPr.required_date };
+        }
+        if (extractedDraft.priority !== newPr.priority) {
+          corrections['priority'] = { ai: extractedDraft.priority, human: newPr.priority };
+        }
+
+        try {
+          await supabase.from('nlp_extraction_logs').insert([
+            {
+              raw_prompt: nlpPrompt,
+              extracted_product_name: extractedDraft.product_name,
+              extracted_quantity: extractedDraft.quantity,
+              extracted_required_date: extractedDraft.required_date,
+              extracted_priority: extractedDraft.priority,
+              priority_reason: extractedDraft.priority_reason,
+              confidence: extractedDraft.confidence,
+              user_corrected: Object.keys(corrections).length > 0,
+              corrected_values: Object.keys(corrections).length > 0 ? corrections : null,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        } catch (logErr) {
+          console.warn('NLP extraction log save note:', logErr);
+        }
+      }
+
       await logStatusHistory(
         'purchase_requisitions',
         pr.pr_id,
         'DRAFT',
         'PENDING_APPROVAL',
-        'Worker submitted Purchase Requisition for Procurement Review',
+        'Worker confirmed and submitted Purchase Requisition for Procurement Review',
         {
           nlp_used: createMode === 'nlp',
           prompt: nlpPrompt,
@@ -203,7 +254,7 @@ export const PurchaseRequisitions: React.FC = () => {
         link: '/purchase-requisitions',
       });
 
-      showSnackbar(`Requisition #${prNumber} submitted for Procurement approval!`, 'success');
+      showSnackbar(`Requisition #${prNumber} confirmed and submitted for Procurement review!`, 'success');
       setOpenCreate(false);
       setExtractedDraft(null);
       setNlpPrompt('');
@@ -213,118 +264,282 @@ export const PurchaseRequisitions: React.FC = () => {
     }
   };
 
-  // 3. Approve PR Handler -> Triggers AI Supplier Recommendation & Creates DRAFT_AI_GENERATED PO
-  const handleApprovePr = async (prId: string) => {
+  // Approve & Supplier Selection Modal State (AI vs Manual vs Multi-Supplier Split - Sections 16-17 of updates9.md)
+  const [openApproveModal, setOpenApproveModal] = useState(false);
+  const [approvingPr, setApprovingPr] = useState<any | null>(null);
+  const [supplierSelectionMode, setSupplierSelectionMode] = useState<'AI' | 'MANUAL' | 'SPLIT'>('AI');
+  const [registeredSuppliers, setRegisteredSuppliers] = useState<any[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [splitAllocations, setSplitAllocations] = useState<Array<{ supplier_id: string; quantity: number }>>([]);
+  const [aiRecommendation, setAiRecommendation] = useState<any | null>(null);
+  const [runningAi, setRunningAi] = useState(false);
+
+  // Open Approve Modal & Compute Initial AI / Manual Selection
+  const handleOpenApproveModal = async (pr: any, customQty?: number) => {
     if (!canApprovePR()) {
       showSnackbar('Permission Denied: Only Procurement Officers can approve Requisitions.', 'error');
       return;
     }
 
+    setApprovingPr(pr);
+    const totalQty = customQty || pr.pr_items?.[0]?.requested_quantity || 500;
+    setApprovingQty(totalQty);
+    setOpenApproveModal(true);
+    setRunningAi(true);
+
     try {
-      const targetPr = prs.find((p) => p.pr_id === prId);
+      const { data: sups } = await supabase.from('suppliers').select('*').neq('status', 'INACTIVE').order('supplier_name');
+      const validSups = sups || [];
+      setRegisteredSuppliers(validSups);
 
-      const { error } = await supabase
-        .from('purchase_requisitions')
-        .update({
-          status: 'APPROVED',
-          approved_at: new Date().toISOString(),
-        })
-        .eq('pr_id', prId);
+      if (validSups.length > 0) {
+        setSelectedSupplierId(validSups[0].supplier_id);
 
-      if (error) throw error;
+        // Initial split distribution preset if multiple suppliers exist
+        if (validSups.length >= 2) {
+          const qty1 = Math.round(totalQty * 0.6);
+          const qty2 = totalQty - qty1;
+          setSplitAllocations([
+            { supplier_id: validSups[0].supplier_id, quantity: qty1 },
+            { supplier_id: validSups[1].supplier_id, quantity: qty2 },
+          ]);
+        } else {
+          setSplitAllocations([{ supplier_id: validSups[0].supplier_id, quantity: totalQty }]);
+        }
 
-      await logStatusHistory(
-        'purchase_requisitions',
-        prId,
-        'PENDING_APPROVAL',
-        'APPROVED',
-        'Procurement Officer approved Requisition and initiated AI Supplier Selection'
-      );
+        // Run Gemini AI Recommendation
+        const { data: perfData } = await supabase.from('supplier_performance').select('*');
+        const candidates = validSups.map((s) => {
+          const perf = perfData?.find((p) => p.supplier_id === s.supplier_id);
+          return {
+            supplier_id: s.supplier_id,
+            supplier_name: s.supplier_name,
+            city: s.city || 'India',
+            quality_score: Number(perf?.quality_score) || (s.rating ? s.rating * 20 : 94),
+            delivery_score: Number(perf?.delivery_score) || 92,
+            overall_score: Number(perf?.overall_score) || (s.rating ? s.rating * 20 : 93),
+            unit_price: pr.pr_items?.[0]?.products?.unit_price || 50,
+            lead_time_days: 3,
+            exception_count: 0,
+            capacity_units: 5000,
+          };
+        });
 
-      // Trigger Gemini Supplier Selection & Generate Draft PO in status DRAFT_AI_GENERATED (Section 14 of updates3.md)
-      if (targetPr) {
-        try {
-          const { data: suppliersData } = await supabase.from('suppliers').select('*');
-          const { data: perfData } = await supabase.from('supplier_performance').select('*');
+        const targetProductId = pr.pr_items?.[0]?.product_id || '';
+        const rec = await getAiSupplierRecommendation(pr.pr_id, targetProductId, totalQty, candidates);
+        setAiRecommendation(rec);
+        if (rec?.recommended_supplier_id) {
+          setSelectedSupplierId(rec.recommended_supplier_id);
+        }
+      } else {
+        setAiRecommendation(null);
+        setSelectedSupplierId('');
+        setSplitAllocations([]);
+      }
+    } catch (err: any) {
+      console.error('AI Recommendation Error:', err);
+    } finally {
+      setRunningAi(false);
+    }
+  };
 
-          const candidates = (suppliersData || []).map((s) => {
-            const perf = perfData?.find((p) => p.supplier_id === s.supplier_id);
-            return {
-              supplier_id: s.supplier_id,
-              supplier_name: s.supplier_name,
-              city: s.city || 'India',
-              quality_score: Number(perf?.quality_score) || 94,
-              delivery_score: Number(perf?.delivery_score) || 92,
-              overall_score: Number(perf?.overall_score) || 93,
-              unit_price: 50,
-              lead_time_days: 3,
-              exception_count: 0,
-              capacity_units: 5000,
-            };
-          });
+  // Confirm Approval & Execute PO Generation (Supports Multi-PO Distribution - Section 16 of updates9.md)
+  const handleExecuteApprovalAndCreatePo = async () => {
+    if (!approvingPr) return;
 
-          if (candidates.length > 0) {
-            const requestedQty = targetPr.pr_items?.[0]?.requested_quantity || 500;
-            const targetProductId = targetPr.pr_items?.[0]?.product_id || '';
-            const rec = await getAiSupplierRecommendation(prId, targetProductId, requestedQty, candidates);
+    const prId = approvingPr.pr_id;
+    const targetPr = approvingPr;
+    const item = targetPr.pr_items?.[0];
+    const requestedQty = approvingQty || item?.requested_quantity || 100;
+    const unitPrice = item?.products?.unit_price || 50.00;
 
-            const poSuffix = Math.floor(1000 + Math.random() * 9000);
-            const poNumber = `PO-2026-${poSuffix}`;
-            const unitPrice = 50.00;
-            const subtotal = requestedQty * unitPrice;
-            const taxAmount = subtotal * 0.18;
-            const totalAmount = subtotal + taxAmount;
+    try {
+      if (supplierSelectionMode === 'SPLIT') {
+        // Multi-Supplier PO Distribution validation
+        const totalAllocated = splitAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+        if (totalAllocated !== requestedQty) {
+          showSnackbar(
+            `Distribution Mismatch: Total allocated (${totalAllocated} units) must equal requested PR quantity (${requestedQty} units).`,
+            'error'
+          );
+          return;
+        }
 
-            const { data: newPo, error: poErr } = await supabase
-              .from('purchase_orders')
-              .insert([
-                {
-                  po_number: poNumber,
-                  pr_id: prId,
-                  supplier_id: rec.recommended_supplier_id,
-                  warehouse_id: targetPr.warehouse_id,
-                  status: 'DRAFT_AI_GENERATED',
-                  subtotal,
-                  tax_amount: taxAmount,
-                  total_amount: totalAmount,
-                  order_date: new Date().toISOString(),
-                  expected_delivery_date: targetPr.required_date || new Date(Date.now() + 5 * 86400000).toISOString(),
-                },
-              ])
-              .select()
-              .single();
+        const validAllocations = splitAllocations.filter((a) => a.supplier_id && Number(a.quantity) > 0);
+        if (validAllocations.length === 0) {
+          showSnackbar('Please allocate quantity to at least one valid supplier.', 'error');
+          return;
+        }
 
-            if (poErr) throw poErr;
+        // 1. Update PR to APPROVED
+        const { error: prUpdateErr } = await supabase
+          .from('purchase_requisitions')
+          .update({
+            status: 'APPROVED',
+            approved_at: new Date().toISOString(),
+          })
+          .eq('pr_id', prId);
 
+        if (prUpdateErr) throw prUpdateErr;
+
+        // 2. Generate separate PO for each distributed supplier
+        const createdPoNumbers: string[] = [];
+        for (const alloc of validAllocations) {
+          const allocSupplier = registeredSuppliers.find((s) => s.supplier_id === alloc.supplier_id);
+          const allocQty = Number(alloc.quantity);
+          const subtotal = allocQty * unitPrice;
+          const taxAmount = subtotal * 0.18;
+          const totalAmount = subtotal + taxAmount;
+          const poSuffix = Math.floor(1000 + Math.random() * 9000);
+          const poNumber = `PO-2026-${poSuffix}`;
+
+          const { data: newPo, error: poErr } = await supabase
+            .from('purchase_orders')
+            .insert([
+              {
+                po_number: poNumber,
+                pr_id: prId,
+                supplier_id: alloc.supplier_id,
+                warehouse_id: targetPr.warehouse_id,
+                status: 'DRAFT_AI_GENERATED',
+                subtotal,
+                tax_amount: taxAmount,
+                total_amount: totalAmount,
+                order_date: new Date().toISOString(),
+                expected_delivery_date: targetPr.required_date || new Date(Date.now() + 5 * 86400000).toISOString(),
+              },
+            ])
+            .select()
+            .single();
+
+          if (poErr) throw poErr;
+
+          // Insert PO line item
+          if (item?.product_id) {
             await supabase.from('po_items').insert([
               {
                 po_id: newPo.po_id,
-                product_id: targetProductId,
-                ordered_quantity: requestedQty,
+                product_id: item.product_id,
+                ordered_quantity: allocQty,
                 unit_price: unitPrice,
                 tax_rate: 18,
                 line_total: subtotal,
               },
             ]);
-
-            await logStatusHistory(
-              'purchase_orders',
-              newPo.po_id,
-              null,
-              'DRAFT_AI_GENERATED',
-              `AI Auto-Drafted PO for ${rec.recommended_supplier_name} based on Gemini supplier selection`
-            );
-
-            showSnackbar(`PR Approved! Auto-generated PO #${poNumber} (Draft AI) for ${rec.recommended_supplier_name}.`, 'success');
           }
-        } catch (aiErr: any) {
-          console.warn('AI PO generation note:', aiErr);
+
+          createdPoNumbers.push(`${poNumber} (${allocQty} units to ${allocSupplier?.supplier_name || 'Vendor'})`);
+
+          await logStatusHistory(
+            'purchase_orders',
+            newPo.po_id,
+            null,
+            'DRAFT_AI_GENERATED',
+            `PO Distributed from PR #${targetPr.pr_number} (${allocQty} units to ${allocSupplier?.supplier_name || 'Vendor'})`
+          );
         }
+
+        await logStatusHistory(
+          'purchase_requisitions',
+          prId,
+          'PENDING_APPROVAL',
+          'APPROVED',
+          `Procurement distributed ${requestedQty} units across ${validAllocations.length} suppliers`
+        );
+
+        showSnackbar(
+          `PR #${targetPr.pr_number} Approved! Distributed into ${validAllocations.length} Purchase Orders: ${createdPoNumbers.join(', ')}`,
+          'success'
+        );
+      } else {
+        // Single Supplier Mode (AI or Manual)
+        if (!selectedSupplierId) {
+          showSnackbar('Please select or register a valid Supplier Partner for this Purchase Order.', 'error');
+          return;
+        }
+
+        const targetSupplier = registeredSuppliers.find((s) => s.supplier_id === selectedSupplierId);
+
+        // 1. Update PR to APPROVED
+        const { error: prUpdateErr } = await supabase
+          .from('purchase_requisitions')
+          .update({
+            status: 'APPROVED',
+            approved_at: new Date().toISOString(),
+          })
+          .eq('pr_id', prId);
+
+        if (prUpdateErr) throw prUpdateErr;
+
+        await logStatusHistory(
+          'purchase_requisitions',
+          prId,
+          'PENDING_APPROVAL',
+          'APPROVED',
+          `Procurement approved PR and assigned supplier ${targetSupplier?.supplier_name || selectedSupplierId} via ${supplierSelectionMode} mode`
+        );
+
+        // 2. Insert PO
+        const subtotal = requestedQty * unitPrice;
+        const taxAmount = subtotal * 0.18;
+        const totalAmount = subtotal + taxAmount;
+        const poSuffix = Math.floor(1000 + Math.random() * 9000);
+        const poNumber = `PO-2026-${poSuffix}`;
+
+        const { data: newPo, error: poErr } = await supabase
+          .from('purchase_orders')
+          .insert([
+            {
+              po_number: poNumber,
+              pr_id: prId,
+              supplier_id: selectedSupplierId,
+              warehouse_id: targetPr.warehouse_id,
+              status: 'DRAFT_AI_GENERATED',
+              subtotal,
+              tax_amount: taxAmount,
+              total_amount: totalAmount,
+              order_date: new Date().toISOString(),
+              expected_delivery_date: targetPr.required_date || new Date(Date.now() + 5 * 86400000).toISOString(),
+            },
+          ])
+          .select()
+          .single();
+
+        if (poErr) throw poErr;
+
+        // 3. Insert PO Item
+        if (item?.product_id) {
+          await supabase.from('po_items').insert([
+            {
+              po_id: newPo.po_id,
+              product_id: item.product_id,
+              ordered_quantity: requestedQty,
+              unit_price: unitPrice,
+              tax_rate: 18,
+              line_total: subtotal,
+            },
+          ]);
+        }
+
+        await logStatusHistory(
+          'purchase_orders',
+          newPo.po_id,
+          null,
+          'DRAFT_AI_GENERATED',
+          `PO Generated for ${targetSupplier?.supplier_name || 'Vendor'} via ${supplierSelectionMode === 'AI' ? 'Gemini AI Automatic Quality Ranking' : 'Manual Procurement Choice'}`
+        );
+
+        showSnackbar(
+          `PR #${targetPr.pr_number} Approved! Purchase Order #${poNumber} generated for ${targetSupplier?.supplier_name || 'Vendor'}.`,
+          'success'
+        );
       }
 
+      setOpenApproveModal(false);
+      setApprovingPr(null);
       triggerRefresh();
     } catch (err: any) {
-      showSnackbar(err.message, 'error');
+      showSnackbar('Approval failed: ' + err.message, 'error');
     }
   };
 
@@ -385,6 +600,10 @@ export const PurchaseRequisitions: React.FC = () => {
     if (activeTab === 'REJECTED') {
       return matchSearch && matchPriority && p.status === 'REJECTED';
     }
+    if (activeTab === 'REMAINING') {
+      const metrics = getPrFulfillmentMetrics(p);
+      return matchSearch && matchPriority && metrics.remainingQty > 0;
+    }
     return matchSearch && matchPriority;
   });
 
@@ -429,10 +648,10 @@ export const PurchaseRequisitions: React.FC = () => {
       </div>
 
       {/* Tabs Navigation (Section 12 & 33) */}
-      <div className="flex border-b border-slate-200 space-x-1 text-xs font-bold text-slate-600">
+      <div className="flex border-b border-slate-200 space-x-1 text-xs font-bold text-slate-600 overflow-x-auto">
         <button
           onClick={() => setActiveTab('ALL')}
-          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
             activeTab === 'ALL' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -443,7 +662,7 @@ export const PurchaseRequisitions: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('MY_PRS')}
-          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
             activeTab === 'MY_PRS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -452,8 +671,24 @@ export const PurchaseRequisitions: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('REMAINING')}
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
+            activeTab === 'REMAINING' ? 'border-amber-600 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+          <span>Remaining Requirements</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-amber-50 text-amber-700 text-[10px]">
+            {prs.filter((p) => {
+              const metrics = getPrFulfillmentMetrics(p);
+              return metrics.remainingQty > 0;
+            }).length}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('APPROVED')}
-          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
             activeTab === 'APPROVED' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -466,7 +701,7 @@ export const PurchaseRequisitions: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('REJECTED')}
-          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all ${
+          className={`pb-3 px-4 flex items-center gap-2 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
             activeTab === 'REJECTED' ? 'border-rose-600 text-rose-600' : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -526,8 +761,20 @@ export const PurchaseRequisitions: React.FC = () => {
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {filteredPrs.length === 0 ? (
                 <tr>
-                  <td colSpan={activeTab === 'REJECTED' ? 8 : 7} className="py-12 text-center text-slate-400">
-                    No purchase requisitions found matching current filters.
+                  <td colSpan={activeTab === 'REJECTED' ? 8 : 7} className="py-16 text-center text-slate-400">
+                    <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
+                    <span className="font-bold text-slate-700 block text-sm">No Purchase Requisitions yet</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">Create the first PR with Gemini AI NLP to begin the Supply Sync workflow.</span>
+                    <button
+                      onClick={() => {
+                        setOpenCreate(true);
+                        setCreateMode('nlp');
+                      }}
+                      className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Create First PR</span>
+                    </button>
                   </td>
                 </tr>
               ) : (
@@ -535,6 +782,7 @@ export const PurchaseRequisitions: React.FC = () => {
                   const item = pr.pr_items?.[0];
                   const isPending = pr.status === 'PENDING' || pr.status === 'PENDING_APPROVAL';
                   const isRejected = pr.status === 'REJECTED';
+                  const metrics = getPrFulfillmentMetrics(pr);
 
                   return (
                     <tr key={pr.pr_id} className={`hover:bg-slate-50/70 transition-colors ${isRejected ? 'bg-rose-50/20' : ''}`}>
@@ -557,9 +805,14 @@ export const PurchaseRequisitions: React.FC = () => {
 
                       <td className="py-3.5 px-4">
                         <strong className="text-slate-900 block">{item?.products?.product_name || 'Industrial Component'}</strong>
-                        <span className="text-slate-500 text-[11px]">
-                          Qty: <strong>{item?.requested_quantity?.toLocaleString() || 100}</strong> {item?.products?.unit_of_measure || 'units'}
+                        <span className="text-slate-500 text-[11px] block">
+                          Total: <strong>{metrics.requestedQty.toLocaleString()}</strong> {item?.products?.unit_of_measure || 'units'}
                         </span>
+                        {metrics.allocatedQty > 0 && (
+                          <span className="text-[10px] text-indigo-600 font-bold block">
+                            Fulfilled: {metrics.allocatedQty} • Remaining: {metrics.remainingQty}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -584,18 +837,23 @@ export const PurchaseRequisitions: React.FC = () => {
                       <td className="py-3.5 px-4">
                         <StatusBadge status={pr.status} />
                         {(() => {
-                          const linkedPo = Array.isArray(pr.purchase_orders) ? pr.purchase_orders[0] : pr.purchase_orders;
-                          if (!linkedPo) return null;
+                          const linkedPos = Array.isArray(pr.purchase_orders) ? pr.purchase_orders : (pr.purchase_orders ? [pr.purchase_orders] : []);
+                          if (linkedPos.length === 0) return null;
                           return (
-                            <button
-                              onClick={() => navigate(`/purchase-orders?po=${linkedPo.po_number || linkedPo.po_id}`)}
-                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-[10px] font-bold transition-colors cursor-pointer"
-                              title="Jump to Linked Purchase Order"
-                            >
-                              <ShoppingCart className="w-2.5 h-2.5" />
-                              <span>Linked {linkedPo.po_number || 'PO'}</span>
-                              <ArrowRight className="w-2.5 h-2.5" />
-                            </button>
+                            <div className="flex flex-col gap-1 mt-1.5">
+                              {linkedPos.map((po: any) => (
+                                <button
+                                  key={po.po_id}
+                                  onClick={() => navigate(`/purchase-orders?po=${po.po_number || po.po_id}`)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-[10px] font-bold transition-colors cursor-pointer"
+                                  title="Jump to Linked Purchase Order"
+                                >
+                                  <ShoppingCart className="w-2.5 h-2.5" />
+                                  <span>{po.po_number || 'PO'}</span>
+                                  <ArrowRight className="w-2.5 h-2.5" />
+                                </button>
+                              ))}
+                            </div>
                           );
                         })()}
                       </td>
@@ -625,7 +883,7 @@ export const PurchaseRequisitions: React.FC = () => {
                             </button>
 
                             <button
-                              onClick={() => handleApprovePr(pr.pr_id)}
+                              onClick={() => handleOpenApproveModal(pr)}
                               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1"
                               title="Approve & Generate AI PO"
                             >
@@ -633,10 +891,19 @@ export const PurchaseRequisitions: React.FC = () => {
                               <span>Approve</span>
                             </button>
                           </div>
+                        ) : !isRejected && metrics.remainingQty > 0 && canApprovePR() ? (
+                          <button
+                            onClick={() => handleOpenApproveModal(pr, metrics.remainingQty)}
+                            className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1 ml-auto"
+                            title="Assign remaining unfulfilled PR requirement to another supplier"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Fulfill Balance ({metrics.remainingQty})</span>
+                          </button>
                         ) : isRejected ? (
                           <span className="text-[11px] font-bold text-rose-600">Rejection Recorded</span>
                         ) : (
-                          <span className="text-[11px] font-bold text-emerald-600">Processed</span>
+                          <span className="text-[11px] font-bold text-emerald-600">Fully Processed</span>
                         )}
                       </td>
                     </tr>
@@ -864,6 +1131,382 @@ export const PurchaseRequisitions: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* Approve PR & Supplier Selection Modal (AI vs Manual)           */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {approvingPr && (
+        <Modal
+          isOpen={openApproveModal}
+          onClose={() => {
+            setOpenApproveModal(false);
+            setApprovingPr(null);
+            setAiRecommendation(null);
+          }}
+          title={`Approve PR & Select Supplier: ${approvingPr?.pr_number}`}
+          subtitle="Assign a registered supplier partner — choose AI-recommended or manually select"
+          maxWidth="xl"
+          footer={
+            <>
+              <button
+                onClick={() => {
+                  setOpenApproveModal(false);
+                  setApprovingPr(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteApprovalAndCreatePo}
+                disabled={!selectedSupplierId || registeredSuppliers.length === 0}
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Approve PR & Generate PO</span>
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-5 text-xs">
+            {/* PR Summary Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">PURCHASE REQUISITION</div>
+              <div className="font-extrabold text-slate-900 text-sm">{approvingPr.pr_number}</div>
+              <div className="grid grid-cols-3 gap-3 mt-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block">Product</span>
+                  <strong className="text-slate-800">{approvingPr.pr_items?.[0]?.products?.product_name || 'Component'}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Quantity</span>
+                  <strong className="text-slate-800">{approvingPr.pr_items?.[0]?.requested_quantity?.toLocaleString() || 100} units</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Warehouse</span>
+                  <strong className="text-slate-800">{approvingPr.warehouses?.warehouse_name || 'Facility'}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* AI vs Manual vs Multi-Supplier Split Toggle (Section 16 of updates9.md) */}
+            <div className="flex rounded-xl bg-slate-100 p-1 gap-1 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setSupplierSelectionMode('AI')}
+                className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  supplierSelectionMode === 'AI' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span>AI Auto-Select</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSupplierSelectionMode('MANUAL')}
+                className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  supplierSelectionMode === 'MANUAL' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Single Supplier</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSupplierSelectionMode('SPLIT')}
+                className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  supplierSelectionMode === 'SPLIT' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Split Across Multiple POs</span>
+              </button>
+            </div>
+
+            {/* No Suppliers Warning */}
+            {registeredSuppliers.length === 0 ? (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900">
+                <div className="font-bold flex items-center gap-1.5 mb-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>No Registered Suppliers Found</span>
+                </div>
+                <p className="text-[11px] text-amber-700">
+                  Please register certified vendors in the <strong>Suppliers & Vendor Register</strong> before approving Purchase Requisitions.
+                  Only suppliers added by authorized Procurement Officers will appear here.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* AI Recommendation Panel */}
+                {supplierSelectionMode === 'AI' && (
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="font-bold text-indigo-950 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-indigo-600" />
+                        <span>Gemini AI Supplier Recommendation</span>
+                      </label>
+                      <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">
+                        MULTI-CRITERIA SOURCING ENGINE
+                      </span>
+                    </div>
+
+                    {runningAi ? (
+                      <div className="flex items-center gap-2 py-4 justify-center">
+                        <Sparkles className="w-5 h-5 text-indigo-600 animate-spin" />
+                        <span className="text-indigo-700 font-bold">Evaluating supplier QC scores, delivery history & pricing...</span>
+                      </div>
+                    ) : aiRecommendation ? (
+                      <div className="space-y-3">
+                        {/* Recommended Supplier */}
+                        <div className="p-3.5 rounded-xl bg-white border border-emerald-200 shadow-sm">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                              <strong className="text-emerald-900">AI Recommended Supplier</strong>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                              {aiRecommendation.confidence}% Confidence
+                            </span>
+                          </div>
+                          <div className="font-extrabold text-slate-900 text-sm">
+                            {aiRecommendation.recommended_supplier_name}
+                          </div>
+                          {(() => {
+                            const recSup = registeredSuppliers.find((s: any) => s.supplier_id === aiRecommendation.recommended_supplier_id);
+                            if (!recSup) return null;
+                            return (
+                              <div className="mt-1.5 flex items-center gap-3 text-[11px] text-slate-600">
+                                <span className="flex items-center gap-1"><Mail className="w-3 h-3 text-blue-500" />{recSup.email}</span>
+                                <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-rose-500" />{recSup.city || 'India'}</span>
+                                <span className="flex items-center gap-1"><Star className="w-3 h-3 text-amber-500 fill-amber-500" />{Number(recSup.rating || 4.8).toFixed(1)}</span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* AI Reasons */}
+                        <div className="space-y-1">
+                          <span className="text-[10px] uppercase font-bold text-indigo-600">AI Reasoning</span>
+                          <ul className="space-y-1">
+                            {aiRecommendation.reasons?.map((r: string, idx: number) => (
+                              <li key={idx} className="text-[11px] text-slate-700 flex items-start gap-1.5">
+                                <Check className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />
+                                <span>{r}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {/* Risk Factors */}
+                        {aiRecommendation.risk_factors?.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-amber-600">Risk Factors</span>
+                            <ul className="space-y-1">
+                              {aiRecommendation.risk_factors.map((r: string, idx: number) => (
+                                <li key={idx} className="text-[11px] text-amber-800 flex items-start gap-1.5">
+                                  <AlertTriangle className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
+                                  <span>{r}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Alternative Suppliers */}
+                        {aiRecommendation.alternative_suppliers?.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-slate-500">Alternative Candidates</span>
+                            <div className="flex flex-wrap gap-2">
+                              {aiRecommendation.alternative_suppliers.map((alt: any, idx: number) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => setSelectedSupplierId(alt.supplier_id)}
+                                  className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-all cursor-pointer ${
+                                    selectedSupplierId === alt.supplier_id
+                                      ? 'bg-blue-50 border-blue-300 text-blue-800'
+                                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {alt.supplier_name} ({alt.score}%)
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="py-4 text-center text-indigo-700 font-bold text-[11px]">
+                        AI evaluation will run automatically when the modal opens.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Manual Supplier Dropdown */}
+                {supplierSelectionMode === 'MANUAL' && (
+                  <div className="space-y-2">
+                    <label className="font-bold text-slate-800 block">
+                      Select Supplier Partner Manually <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={selectedSupplierId}
+                      onChange={(e) => setSelectedSupplierId(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:outline-hidden focus:border-blue-500"
+                    >
+                      <option value="" disabled>— Choose a Registered Supplier —</option>
+                      {registeredSuppliers.map((s: any) => (
+                        <option key={s.supplier_id} value={s.supplier_id}>
+                          {s.supplier_name} ({s.supplier_code || s.supplier_id}) — {s.email} ({s.city || 'India'})
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Selected Supplier Details Card */}
+                    {(() => {
+                      const selSup = registeredSuppliers.find((s: any) => s.supplier_id === selectedSupplierId);
+                      if (!selSup) return null;
+                      return (
+                        <div className="mt-1.5 px-3 py-2.5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between text-[11px] text-slate-700">
+                          <span>ID: <strong className="text-blue-700">{selSup.supplier_code || selSup.supplier_id}</strong></span>
+                          <span>Email: <strong className="text-slate-900">{selSup.email}</strong></span>
+                          <span>Location: <strong className="text-slate-800">{selSup.city || 'India'}</strong></span>
+                          <span className="flex items-center gap-1">
+                            <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                            <strong>{Number(selSup.rating || 4.8).toFixed(1)}</strong>
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Multi-Supplier Distribution Panel (Sections 16-17 of updates9.md) */}
+                {supplierSelectionMode === 'SPLIT' && (
+                  <div className="space-y-3 p-4 bg-emerald-50/40 border border-emerald-200 rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-emerald-950 text-xs block">
+                          Distribute Requisition Across Multiple Vendors
+                        </span>
+                        <span className="text-[11px] text-emerald-700">
+                          Total PR Quantity: <strong>{approvingPr.pr_items?.[0]?.requested_quantity || 100} units</strong>
+                        </span>
+                      </div>
+                      {(() => {
+                        const totalReq = approvingPr.pr_items?.[0]?.requested_quantity || 100;
+                        const allocated = splitAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+                        const diff = totalReq - allocated;
+                        return (
+                          <span
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${
+                              diff === 0
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                : 'bg-amber-100 text-amber-800 border-amber-300'
+                            }`}
+                          >
+                            {diff === 0
+                              ? '✓ 100% Balanced'
+                              : diff > 0
+                              ? `${diff} units unallocated`
+                              : `${Math.abs(diff)} units over-allocated`}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="space-y-2">
+                      {splitAllocations.map((alloc, idx) => (
+                        <div key={idx} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
+                          <div className="flex-1">
+                            <select
+                              value={alloc.supplier_id}
+                              onChange={(e) => {
+                                const copy = [...splitAllocations];
+                                copy[idx].supplier_id = e.target.value;
+                                setSplitAllocations(copy);
+                              }}
+                              className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800"
+                            >
+                              <option value="" disabled>Select Vendor</option>
+                              {registeredSuppliers.map((s) => (
+                                <option key={s.supplier_id} value={s.supplier_id}>
+                                  {s.supplier_name} ({s.supplier_code})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="w-28">
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Qty"
+                                value={alloc.quantity}
+                                onChange={(e) => {
+                                  const copy = [...splitAllocations];
+                                  copy[idx].quantity = Number(e.target.value) || 0;
+                                  setSplitAllocations(copy);
+                                }}
+                                className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 text-right pr-6"
+                              />
+                              <span className="absolute right-2 top-2 text-[10px] text-slate-400 font-medium">units</span>
+                            </div>
+                          </div>
+
+                          {splitAllocations.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSplitAllocations(splitAllocations.filter((_, i) => i !== idx));
+                              }}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Remove supplier line"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+
+                      {splitAllocations.length < registeredSuppliers.length && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const unusedSup = registeredSuppliers.find(
+                              (s) => !splitAllocations.some((a) => a.supplier_id === s.supplier_id)
+                            );
+                            setSplitAllocations([
+                              ...splitAllocations,
+                              { supplier_id: unusedSup?.supplier_id || registeredSuppliers[0].supplier_id, quantity: 100 },
+                            ]);
+                          }}
+                          className="px-3 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100/60 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Another Vendor to Split Distribution</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selection Mode Footer */}
+                <div className="p-2.5 rounded-xl bg-slate-100 border border-slate-200 text-[11px] text-slate-600 flex items-center gap-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>
+                    Selection Mode: <strong className="text-slate-900">{supplierSelectionMode === 'AI' ? 'Gemini AI Automatic Quality Ranking' : 'Manual Procurement Officer Choice'}</strong>
+                    {selectedSupplierId && (
+                      <> — Selected: <strong className="text-blue-700">{registeredSuppliers.find((s: any) => s.supplier_id === selectedSupplierId)?.supplier_name || selectedSupplierId}</strong></>
+                    )}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {/* Rejection Modal with Mandatory Reason (Section 12 & 33) */}
       <Modal

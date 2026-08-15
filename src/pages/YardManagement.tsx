@@ -25,9 +25,16 @@ export const YardManagement: React.FC = () => {
   const [docks, setDocks] = useState<any[]>([]);
   const [trucks, setTrucks] = useState<any[]>([]);
   const [yards, setYards] = useState<any[]>([]);
+  const [parkingSlots, setParkingSlots] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [aiDockRec, setAiDockRec] = useState<DockRecommendationResult | null>(null);
   const [evaluatingDock, setEvaluatingDock] = useState(false);
+  const [activeYardTab, setActiveYardTab] = useState<'queue' | 'docks' | 'parking'>('queue');
+
+  // Search
+  const [queueSearch, setQueueSearch] = useState('');
+  const [queueStatusFilter, setQueueStatusFilter] = useState('');
+  const [shipmentSearch, setShipmentSearch] = useState('');
 
   // Selected Interactive Dock Modal state
   const [selectedDockModal, setSelectedDockModal] = useState<{ dock: any; assignedEntry?: any } | null>(null);
@@ -35,13 +42,18 @@ export const YardManagement: React.FC = () => {
   const [shipments, setShipments] = useState<any[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
 
+  // Parking Assignment Modal
+  const [parkingDialog, setParkingDialog] = useState<{ open: boolean; slot: any | null }>({ open: false, slot: null });
+  const [parkingShipmentId, setParkingShipmentId] = useState('');
+  const [parkingTruckId, setParkingTruckId] = useState('');
+
   // Gate Check-in Modal
   const [openCheckIn, setOpenCheckIn] = useState(false);
   const [checkInState, setCheckInState] = useState({
     truck_id: '',
     yard_id: '',
     shipment_id: '',
-    po_id: '',
+    notes: '',
   });
 
   // Assign Dock Modal
@@ -65,14 +77,16 @@ export const YardManagement: React.FC = () => {
         { data: yardData },
         { data: shpData },
         { data: poData },
+        { data: parkingData },
       ] = await Promise.all([
         supabase
           .from('yard_entries')
           .select(`
             *,
             trucks(vehicle_number, driver_name, driver_phone),
-            shipments(shipment_number, asn_number, total_quantity),
+            shipments(shipment_number, asn_number, total_quantity, po_id, supplier_id),
             purchase_orders(po_number, suppliers(supplier_name)),
+            suppliers(supplier_name),
             yards(yard_name),
             dock_assignments(
               dock_id,
@@ -84,8 +98,12 @@ export const YardManagement: React.FC = () => {
         supabase.from('docks').select('*, yards(yard_name)'),
         supabase.from('trucks').select('*'),
         supabase.from('yards').select('*'),
-        supabase.from('shipments').select('*, purchase_orders(po_number, supplier_id, suppliers(supplier_name))'),
+        supabase
+          .from('shipments')
+          .select('*, purchase_orders(po_number, supplier_id, suppliers(supplier_name))')
+          .in('status', ['IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING']),
         supabase.from('purchase_orders').select('*, suppliers(supplier_name)'),
+        supabase.from('parking_slots').select('*, yards(yard_name)').order('slot_code'),
       ]);
 
       setEntries(entryData || []);
@@ -94,13 +112,14 @@ export const YardManagement: React.FC = () => {
       setYards(yardData || []);
       setShipments(shpData || []);
       setPurchaseOrders(poData || []);
+      setParkingSlots(parkingData || []);
 
       if (truckData?.length && yardData?.length && !checkInState.truck_id) {
         setCheckInState({
           truck_id: truckData[0].truck_id,
           yard_id: yardData[0].yard_id,
           shipment_id: shpData?.[0]?.shipment_id || '',
-          po_id: shpData?.[0]?.po_id || poData?.[0]?.po_id || '',
+          notes: '',
         });
       }
     } catch (err: any) {
@@ -114,19 +133,25 @@ export const YardManagement: React.FC = () => {
     try {
       if (!checkInState.truck_id || !checkInState.yard_id) return;
 
+      // Derive po_id and supplier_id from selected shipment — no manual entry
       const selectedShipment = shipments.find((s) => s.shipment_id === checkInState.shipment_id);
-      const poId = checkInState.po_id || selectedShipment?.po_id || null;
+      const derivedPoId = selectedShipment?.po_id || null;
+      const derivedSupplierId = selectedShipment?.supplier_id ||
+        selectedShipment?.purchase_orders?.supplier_id || null;
 
       const { error } = await supabase.from('yard_entries').insert([
         {
           truck_id: checkInState.truck_id,
           yard_id: checkInState.yard_id,
           shipment_id: checkInState.shipment_id || null,
-          po_id: poId,
+          po_id: derivedPoId,
+          supplier_id: derivedSupplierId,
           entry_time: new Date().toISOString(),
+          gate_in_time: new Date().toISOString(),
           status: 'WAITING',
           gate_verified: true,
           waiting_minutes: 0,
+          notes: checkInState.notes || null,
         },
       ]);
 
@@ -144,8 +169,71 @@ export const YardManagement: React.FC = () => {
           .eq('shipment_id', checkInState.shipment_id);
       }
 
-      showSnackbar('Gate verification confirmed: Truck + Driver + Shipment + PO linked. Added to Yard Queue.', 'success');
+      await logAuditAction('GATE_IN', 'yard_entries', checkInState.truck_id, {
+        shipment_id: checkInState.shipment_id,
+        po_id: derivedPoId,
+        yard_id: checkInState.yard_id,
+      });
+
+      showSnackbar('Gate verified: Truck + Shipment + PO linked. Added to yard queue.', 'success');
       setOpenCheckIn(false);
+      setCheckInState({ truck_id: '', yard_id: yards[0]?.yard_id || '', shipment_id: '', notes: '' });
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar(err.message, 'error');
+    }
+  };
+
+  const handleAssignParking = async () => {
+    try {
+      if (!parkingDialog.slot || !parkingShipmentId) return;
+      const slot = parkingDialog.slot;
+      if (slot.status === 'OCCUPIED') {
+        showSnackbar('Slot is already occupied.', 'error');
+        return;
+      }
+      const { error } = await supabase
+        .from('parking_slots')
+        .update({
+          status: 'OCCUPIED',
+          current_shipment_id: parkingShipmentId,
+          current_truck_id: parkingTruckId || null,
+          assigned_at: new Date().toISOString(),
+          released_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('parking_id', slot.parking_id);
+      if (error) throw error;
+      await supabase.from('shipments').update({ status: 'PARKED', parking_slot: slot.slot_code }).eq('shipment_id', parkingShipmentId);
+      await logAuditAction('PARKING_ASSIGNED', 'parking_slots', slot.parking_id, { slot_code: slot.slot_code, shipment_id: parkingShipmentId });
+      showSnackbar(`Slot ${slot.slot_code} assigned. Shipment status → PARKED.`, 'success');
+      setParkingDialog({ open: false, slot: null });
+      setParkingShipmentId('');
+      setParkingTruckId('');
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar(err.message, 'error');
+    }
+  };
+
+  const handleReleaseParking = async (slot: any) => {
+    try {
+      const { error } = await supabase
+        .from('parking_slots')
+        .update({
+          status: 'AVAILABLE',
+          current_shipment_id: null,
+          current_truck_id: null,
+          released_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('parking_id', slot.parking_id);
+      if (error) throw error;
+      if (slot.current_shipment_id) {
+        await supabase.from('shipments').update({ status: 'WAITING_FOR_DOCK', parking_slot: null }).eq('shipment_id', slot.current_shipment_id);
+      }
+      await logAuditAction('PARKING_RELEASED', 'parking_slots', slot.parking_id, { slot_code: slot.slot_code });
+      showSnackbar(`Slot ${slot.slot_code} released → AVAILABLE.`, 'success');
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
@@ -166,7 +254,7 @@ export const YardManagement: React.FC = () => {
 
       const res = await getAiDockRecommendation({
         truck_id: assignDialog.entry?.truck_id || 'TRUCK',
-        vehicle_number: assignDialog.entry?.trucks?.vehicle_number || 'TRUCK-DEMO',
+        vehicle_number: assignDialog.entry?.trucks?.vehicle_number || 'TRUCK-INBOUND',
         truck_type: 'Heavy 10-Ton Container',
         product_category: 'Standard Pallet Cargo',
         waiting_minutes: assignDialog.entry?.waiting_minutes || 10,
@@ -400,10 +488,10 @@ export const YardManagement: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Boxes className="w-5 h-5 text-blue-600" />
-            Yard & Inbound Loading Dock Bays
+            Yard, Dock & Parking Management
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Gate check-in security, interactive dock bay scheduling, waiting queue telemetry, and turnaround management.
+            Gate check-in, dock assignment, parking management, and live yard queue.
           </p>
         </div>
 
@@ -425,7 +513,23 @@ export const YardManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Visual Dock Grid Representation (Section 15 & 16 of updates4.md) */}
+      {/* Tab Switcher */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+        {(['queue', 'docks', 'parking'] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setActiveYardTab(t)}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold capitalize transition-colors ${
+              activeYardTab === t ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t === 'queue' ? 'Yard Queue' : t === 'docks' ? 'Dock Bays' : 'Parking Slots'}
+          </button>
+        ))}
+      </div>
+
+      {/* ─── DOCK BAYS TAB ─── */}
+      {activeYardTab === 'docks' && (
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
           <div>
@@ -516,16 +620,107 @@ export const YardManagement: React.FC = () => {
           })}
         </div>
       </div>
+      )}
 
-      {/* Inbound Yard Vehicle Waiting Queue (Section 34) */}
+      {/* ─── PARKING SLOTS TAB ─── */}
+      {activeYardTab === 'parking' && (
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900">
-            Inbound Yard Vehicle Waiting Queue
-          </h3>
-          <span className="text-xs text-slate-500">
-            {entries.filter((e) => e.status !== 'DEPARTED').length} vehicles currently logged inside facility
-          </span>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Parking Slot Management</h3>
+            <p className="text-xs text-slate-500">Assign incoming trucks to available slots. Release when moving to a dock.</p>
+          </div>
+          <div className="flex gap-2 text-[11px] font-bold">
+            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded">
+              {parkingSlots.filter(s => s.status === 'AVAILABLE').length} Available
+            </span>
+            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+              {parkingSlots.filter(s => s.status === 'OCCUPIED').length} Occupied
+            </span>
+          </div>
+        </div>
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {parkingSlots.length === 0 ? (
+            <div className="col-span-5 py-8 text-center text-slate-400 text-xs">No parking slots found. Check if yards exist.</div>
+          ) : parkingSlots.map((slot) => (
+            <div
+              key={slot.parking_id}
+              className={`p-3.5 rounded-xl border transition-all ${
+                slot.status === 'AVAILABLE'
+                  ? 'border-emerald-200 bg-emerald-50/50 hover:border-emerald-400 cursor-pointer'
+                  : slot.status === 'OCCUPIED'
+                  ? 'border-blue-300 bg-blue-50/50'
+                  : 'border-amber-200 bg-amber-50/50'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-black text-slate-900">{slot.slot_code}</span>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  slot.status === 'AVAILABLE' ? 'bg-emerald-600 text-white' :
+                  slot.status === 'OCCUPIED' ? 'bg-blue-600 text-white' :
+                  'bg-amber-600 text-white'
+                }`}>{slot.status}</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mb-2">{slot.yards?.yard_name || 'Yard'}</div>
+              {slot.status === 'OCCUPIED' && (
+                <div className="text-[11px] text-blue-700 font-semibold mb-2 truncate">
+                  Shipment assigned
+                </div>
+              )}
+              {slot.status === 'AVAILABLE' ? (
+                <button
+                  onClick={() => { setParkingDialog({ open: true, slot }); setParkingShipmentId(''); setParkingTruckId(''); }}
+                  className="w-full text-center text-[11px] font-bold text-emerald-700 hover:text-emerald-900 border border-emerald-300 rounded py-1 bg-white hover:bg-emerald-50 transition-colors"
+                >
+                  Assign
+                </button>
+              ) : slot.status === 'OCCUPIED' ? (
+                <button
+                  onClick={() => handleReleaseParking(slot)}
+                  className="w-full text-center text-[11px] font-bold text-amber-700 hover:text-amber-900 border border-amber-300 rounded py-1 bg-white hover:bg-amber-50 transition-colors"
+                >
+                  Release
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
+      {/* ─── YARD QUEUE TAB ─── */}
+      {activeYardTab === 'queue' && (
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="p-4 border-b border-slate-100">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                Inbound Yard Vehicle Queue
+              </h3>
+              <span className="text-xs text-slate-500">
+                {entries.filter((e) => e.status !== 'DEPARTED').length} vehicles currently logged inside facility
+              </span>
+            </div>
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                placeholder="Search truck, driver, shipment, PO..."
+                value={queueSearch}
+                onChange={e => setQueueSearch(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 w-56 focus:outline-none focus:border-blue-400"
+              />
+              <select
+                value={queueStatusFilter}
+                onChange={e => setQueueStatusFilter(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50"
+              >
+                <option value="">All Status</option>
+                {['WAITING','AT_DOCK','DEPARTED','PARKED'].map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -533,9 +728,10 @@ export const YardManagement: React.FC = () => {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/75 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
                 <th className="py-3 px-4">Vehicle & Driver</th>
+                <th className="py-3 px-4">Shipment / PO</th>
                 <th className="py-3 px-4">Yard Facility</th>
                 <th className="py-3 px-4">Gate In Time</th>
-                <th className="py-3 px-4">Dwell / Wait Time</th>
+                <th className="py-3 px-4">Wait</th>
                 <th className="py-3 px-4">Assigned Dock</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
@@ -543,45 +739,63 @@ export const YardManagement: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
-                    Loading Yard Queue...
-                  </td>
-                </tr>
-              ) : entries.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
-                    No trucks currently in the yard queue. Click "Gate Check-In" to log vehicle entry.
-                  </td>
-                </tr>
+                <tr><td colSpan={8} className="py-8 text-center text-slate-400">Loading Yard Queue...</td></tr>
+              ) : entries
+                .filter((entry) => {
+                  const q = queueSearch.toLowerCase();
+                  const matchSearch = !q ||
+                    entry.trucks?.vehicle_number?.toLowerCase().includes(q) ||
+                    entry.trucks?.driver_name?.toLowerCase().includes(q) ||
+                    entry.shipments?.shipment_number?.toLowerCase().includes(q) ||
+                    entry.purchase_orders?.po_number?.toLowerCase().includes(q) ||
+                    entry.suppliers?.supplier_name?.toLowerCase().includes(q);
+                  const matchStatus = !queueStatusFilter || entry.status === queueStatusFilter;
+                  return matchSearch && matchStatus;
+                })
+                .length === 0 ? (
+                <tr><td colSpan={8} className="py-8 text-center text-slate-400">No vehicles match. Click "Gate Check-In" to log entry.</td></tr>
               ) : (
-                entries.map((entry) => {
+                entries
+                  .filter((entry) => {
+                    const q = queueSearch.toLowerCase();
+                    const matchSearch = !q ||
+                      entry.trucks?.vehicle_number?.toLowerCase().includes(q) ||
+                      entry.trucks?.driver_name?.toLowerCase().includes(q) ||
+                      entry.shipments?.shipment_number?.toLowerCase().includes(q) ||
+                      entry.purchase_orders?.po_number?.toLowerCase().includes(q) ||
+                      entry.suppliers?.supplier_name?.toLowerCase().includes(q);
+                    const matchStatus = !queueStatusFilter || entry.status === queueStatusFilter;
+                    return matchSearch && matchStatus;
+                  })
+                  .map((entry) => {
                   const assignment = entry.dock_assignments?.[0];
                   return (
                     <tr key={entry.yard_entry_id} className="hover:bg-slate-50/75 transition-colors">
                       <td className="py-3.5 px-4 font-bold text-blue-600">
-                        {entry.trucks?.vehicle_number || 'MH-12-AB-1234'}
-                        <div className="text-[11px] font-normal text-slate-400">
-                          {entry.trucks?.driver_name || 'Rajesh Sharma'}
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-900">
-                        {entry.yards?.yard_name || 'North Inbound Yard'}
+                        {entry.trucks?.vehicle_number || '—'}
+                        <div className="text-[11px] font-normal text-slate-400">{entry.trucks?.driver_name || '—'}</div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-600">
-                        {new Date(entry.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className="font-semibold text-slate-800">{entry.shipments?.shipment_number || '—'}</div>
+                        <div className="text-[11px] text-slate-400">{entry.purchase_orders?.po_number || (entry.po_id ? `PO: ${String(entry.po_id).slice(0,8)}…` : '—')}</div>
+                      </td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-900">
+                        {entry.yards?.yard_name || '—'}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600">
+                        {entry.gate_in_time || entry.entry_time
+                          ? new Date(entry.gate_in_time || entry.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : '—'}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-1 font-semibold text-amber-700">
                           <Clock className="w-3.5 h-3.5" />
-                          <span>{entry.waiting_minutes || 5} mins</span>
+                          <span>{entry.waiting_minutes || 0} mins</span>
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
                         {assignment?.docks?.dock_number ? (
-                          <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold">
-                            {assignment.docks.dock_number}
-                          </span>
+                          <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold">{assignment.docks.dock_number}</span>
                         ) : (
                           <span className="text-slate-400 text-[11px]">Unassigned</span>
                         )}
@@ -592,10 +806,7 @@ export const YardManagement: React.FC = () => {
                       <td className="py-3.5 px-4 text-right">
                         {entry.status === 'WAITING' ? (
                           <button
-                            onClick={() => {
-                              setAssignDialog({ open: true, entry });
-                              if (docks.length) setSelectedDockId(docks[0].dock_id);
-                            }}
+                            onClick={() => { setAssignDialog({ open: true, entry }); if (docks.length) setSelectedDockId(docks[0].dock_id); }}
                             className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-xs"
                           >
                             Assign Dock
@@ -619,6 +830,7 @@ export const YardManagement: React.FC = () => {
           </table>
         </div>
       </div>
+      )}
 
       {/* Gate Check-in Modal */}
       <Modal
@@ -645,83 +857,103 @@ export const YardManagement: React.FC = () => {
         }
       >
         <div className="space-y-4 text-xs">
+          {/* Shipment Search */}
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">
-              Arriving Carrier Truck
-            </label>
+            <label className="font-semibold text-slate-700 block mb-1.5">Search Shipment / Truck / PO / Supplier</label>
+            <input
+              type="text"
+              placeholder="Type shipment number, truck, PO, driver or supplier..."
+              value={shipmentSearch}
+              onChange={e => setShipmentSearch(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          {/* Truck */}
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1.5">Arriving Carrier Truck</label>
             <select
               value={checkInState.truck_id}
               onChange={(e) => setCheckInState({ ...checkInState, truck_id: e.target.value })}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
             >
-              {trucks.map((t) => (
-                <option key={t.truck_id} value={t.truck_id}>
-                  {t.vehicle_number} ({t.driver_name})
-                </option>
+              <option value="">— Select Truck —</option>
+              {trucks
+                .filter(t => !shipmentSearch ||
+                  t.vehicle_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
+                  t.driver_name?.toLowerCase().includes(shipmentSearch.toLowerCase())
+                )
+                .map((t) => (
+                  <option key={t.truck_id} value={t.truck_id}>
+                    {t.vehicle_number} — {t.driver_name}
+                  </option>
               ))}
             </select>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1.5">
-                Linked Inbound Shipment
-              </label>
-              <select
-                value={checkInState.shipment_id}
-                onChange={(e) => {
-                  const shp = shipments.find((s) => s.shipment_id === e.target.value);
-                  setCheckInState({
-                    ...checkInState,
-                    shipment_id: e.target.value,
-                    po_id: shp?.po_id || checkInState.po_id,
-                  });
-                }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-              >
-                <option value="">— Direct Gate Verification —</option>
-                {shipments.map((s) => (
+          {/* Linked Shipment */}
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1.5">Linked Inbound Shipment</label>
+            <select
+              value={checkInState.shipment_id}
+              onChange={(e) => {
+                setCheckInState({ ...checkInState, shipment_id: e.target.value });
+              }}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="">— Direct Gate Verification (No Shipment) —</option>
+              {shipments
+                .filter(s => !shipmentSearch ||
+                  s.shipment_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
+                  s.purchase_orders?.po_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
+                  s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(shipmentSearch.toLowerCase())
+                )
+                .map((s) => (
                   <option key={s.shipment_id} value={s.shipment_id}>
-                    {s.shipment_number} ({s.total_quantity} units)
+                    {s.shipment_number} — {s.total_quantity} units — {s.purchase_orders?.po_number || 'No PO'}
                   </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1.5">
-                Contractual PO Reference
-              </label>
-              <select
-                value={checkInState.po_id}
-                onChange={(e) => setCheckInState({ ...checkInState, po_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
-              >
-                <option value="">— Select PO —</option>
-                {purchaseOrders.map((p) => (
-                  <option key={p.po_id} value={p.po_id}>
-                    {p.po_number} ({p.suppliers?.supplier_name || 'Vendor'})
-                  </option>
-                ))}
-              </select>
-            </div>
+              ))}
+            </select>
+            {/* Auto-derived PO/Supplier Info */}
+            {checkInState.shipment_id && (() => {
+              const shp = shipments.find(s => s.shipment_id === checkInState.shipment_id);
+              if (!shp) return null;
+              return (
+                <div className="mt-2 p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-[11px] space-y-0.5">
+                  <div className="flex gap-4">
+                    <span><span className="text-slate-500 font-semibold">PO:</span> <span className="font-bold text-blue-700">{shp.purchase_orders?.po_number || '—'}</span></span>
+                    <span><span className="text-slate-500 font-semibold">Supplier:</span> <span className="font-bold text-blue-700">{shp.purchase_orders?.suppliers?.supplier_name || '—'}</span></span>
+                  </div>
+                  <div className="text-slate-500">PO and Supplier will be auto-linked from this shipment. No manual entry needed.</div>
+                </div>
+              );
+            })()}
           </div>
 
+          {/* Yard */}
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">
-              Destination Yard Zone
-            </label>
+            <label className="font-semibold text-slate-700 block mb-1.5">Destination Yard Zone</label>
             <select
               value={checkInState.yard_id}
               onChange={(e) => setCheckInState({ ...checkInState, yard_id: e.target.value })}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
             >
               {yards.map((y) => (
-                <option key={y.yard_id} value={y.yard_id}>
-                  {y.yard_name}
-                </option>
+                <option key={y.yard_id} value={y.yard_id}>{y.yard_name}</option>
               ))}
             </select>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1.5">Gate Notes (Optional)</label>
+            <textarea
+              value={checkInState.notes}
+              onChange={e => setCheckInState({ ...checkInState, notes: e.target.value })}
+              placeholder="Seal number, condition notes, security remarks..."
+              rows={2}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 resize-none focus:outline-none focus:border-blue-400"
+            />
           </div>
         </div>
       </Modal>
@@ -957,6 +1189,52 @@ export const YardManagement: React.FC = () => {
             </div>
           );
         })()}
+      </Modal>
+
+      {/* Parking Assignment Modal */}
+      <Modal
+        isOpen={parkingDialog.open}
+        onClose={() => setParkingDialog({ open: false, slot: null })}
+        title={`Assign Parking Slot: ${parkingDialog.slot?.slot_code}`}
+        subtitle={`Yard: ${parkingDialog.slot?.yards?.yard_name || ''}`}
+        maxWidth="sm"
+        footer={
+          <>
+            <button onClick={() => setParkingDialog({ open: false, slot: null })} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
+            <button onClick={handleAssignParking} className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs">Assign Slot</button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-xs">
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1.5">Select Shipment to Park</label>
+            <select
+              value={parkingShipmentId}
+              onChange={e => setParkingShipmentId(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="">— Select Shipment —</option>
+              {shipments.map(s => (
+                <option key={s.shipment_id} value={s.shipment_id}>
+                  {s.shipment_number} — {s.total_quantity} units
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1.5">Truck (Optional)</label>
+            <select
+              value={parkingTruckId}
+              onChange={e => setParkingTruckId(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="">— Select Truck (Optional) —</option>
+              {trucks.map(t => (
+                <option key={t.truck_id} value={t.truck_id}>{t.vehicle_number} — {t.driver_name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </Modal>
     </div>
   );

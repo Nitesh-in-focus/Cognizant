@@ -105,7 +105,10 @@ export const QualityCheckPage: React.FC = () => {
       const [{ data: qcData }, { data: supData }, { data: poData }, { data: prodData }] = await Promise.all([
         qcQuery,
         supabase.from('suppliers').select('*').eq('status', 'ACTIVE'),
-        supabase.from('purchase_orders').select('*, suppliers(supplier_name)').order('order_date', { ascending: false }),
+        supabase
+          .from('purchase_orders')
+          .select('*, suppliers(supplier_id, supplier_name, supplier_code, city), po_items(*, products(*))')
+          .order('order_date', { ascending: false }),
         supabase.from('products').select('*').eq('status', 'ACTIVE'),
       ]);
 
@@ -114,12 +117,23 @@ export const QualityCheckPage: React.FC = () => {
       setPurchaseOrders(poData || []);
       setProducts(prodData || []);
 
-      if (supData && supData.length > 0 && !form.supplier_id) {
+      if (poData && poData.length > 0 && !form.po_id) {
+        const initialPo = poData[0];
+        const firstItem = (initialPo as any).po_items?.[0];
+        const initialProdId = firstItem?.product_id || (prodData && prodData.length > 0 ? prodData[0].product_id : '');
+        const expQty = Number(firstItem?.ordered_quantity) || Number((initialPo as any).total_quantity) || 100;
+
         setForm((prev) => ({
           ...prev,
-          supplier_id: supData[0].supplier_id,
-          po_id: poData && poData.length > 0 ? poData[0].po_id : '',
-          product_id: prodData && prodData.length > 0 ? prodData[0].product_id : '',
+          po_id: initialPo.po_id,
+          supplier_id: initialPo.supplier_id || (initialPo.suppliers as any)?.supplier_id || (supData?.[0]?.supplier_id ?? ''),
+          product_id: initialProdId,
+          expected_quantity: expQty,
+          received_quantity: expQty,
+          accepted_quantity: expQty,
+          damaged_quantity: 0,
+          rejected_quantity: 0,
+          missing_quantity: 0,
         }));
       }
     } catch (err: any) {
@@ -128,6 +142,33 @@ export const QualityCheckPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Auto-fill QC context when PO is selected (Updates 11 Section 4-5)
+  const handlePoSelect = (poId: string) => {
+    const po = purchaseOrders.find((p) => p.po_id === poId);
+    if (!po) {
+      setForm((prev) => ({ ...prev, po_id: poId }));
+      return;
+    }
+
+    const targetSupplierId = po.supplier_id || (po.suppliers as any)?.supplier_id || '';
+    const firstItem = (po as any).po_items?.[0];
+    const targetProductId = firstItem?.product_id || (products.length > 0 ? products[0].product_id : '');
+    const expQty = Number(firstItem?.ordered_quantity) || Number((po as any).total_quantity) || 100;
+
+    setForm((prev) => ({
+      ...prev,
+      po_id: poId,
+      supplier_id: targetSupplierId,
+      product_id: targetProductId,
+      expected_quantity: expQty,
+      received_quantity: expQty,
+      accepted_quantity: expQty,
+      damaged_quantity: 0,
+      rejected_quantity: 0,
+      missing_quantity: 0,
+    }));
   };
 
   // Compute Authoritative Overall Score (0-100) from the 8 factors (Section 27 of updates5.md)
@@ -201,12 +242,17 @@ export const QualityCheckPage: React.FC = () => {
         ? Math.round((form.damaged_quantity / form.received_quantity) * 1000) / 10
         : 0;
 
-      const targetSupplierId = form.supplier_id || (suppliers.length > 0 ? suppliers[0].supplier_id : '');
+      const selectedPo = purchaseOrders.find((p) => p.po_id === form.po_id);
       const targetPoId = form.po_id || (purchaseOrders.length > 0 ? purchaseOrders[0].po_id : '');
+      const targetSupplierId = form.supplier_id || selectedPo?.supplier_id || (suppliers.length > 0 ? suppliers[0].supplier_id : '');
       const targetProductId = form.product_id || (products.length > 0 ? products[0].product_id : '');
 
-      if (!targetSupplierId || !targetPoId) {
-        showToast('Please select a valid supplier and purchase order.', 'error');
+      if (!targetPoId) {
+        showToast('Please select a valid purchase order for quality inspection.', 'error');
+        return;
+      }
+      if (!targetSupplierId) {
+        showToast('Unable to derive supplier payee from the selected purchase order.', 'error');
         return;
       }
 
@@ -611,53 +657,67 @@ export const QualityCheckPage: React.FC = () => {
               </button>
             </div>
 
-            {/* Target Selectors */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Supplier</label>
-                <select
-                  value={form.supplier_id}
-                  onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                >
-                  {suppliers.map((s) => (
-                    <option key={s.supplier_id} value={s.supplier_id}>
-                      {s.supplier_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {/* Target Selectors (Updates 11 Section 4-5) */}
+            {(() => {
+              const selectedPo = purchaseOrders.find((p) => p.po_id === form.po_id);
+              const derivedSupplier = suppliers.find((s) => s.supplier_id === form.supplier_id) || (selectedPo as any)?.suppliers;
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Target PO</label>
-                <select
-                  value={form.po_id}
-                  onChange={(e) => setForm({ ...form, po_id: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono"
-                >
-                  {purchaseOrders.map((p) => (
-                    <option key={p.po_id} value={p.po_id}>
-                      {p.po_number}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              return (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Select Target Purchase Order <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={form.po_id}
+                        onChange={(e) => handlePoSelect(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-blue-700"
+                      >
+                        <option value="">-- Choose Purchase Order --</option>
+                        {purchaseOrders.map((p) => (
+                          <option key={p.po_id} value={p.po_id}>
+                            {p.po_number} — {(p as any).suppliers?.supplier_name || 'Vendor'} (₹{Number(p.total_amount || 0).toLocaleString()})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-slate-400 mt-0.5 block">
+                        Selecting PO auto-fetches supplier, product specifications, and expected quantity.
+                      </span>
+                    </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Product SKU</label>
-                <select
-                  value={form.product_id}
-                  onChange={(e) => setForm({ ...form, product_id: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                >
-                  {products.map((pr) => (
-                    <option key={pr.product_id} value={pr.product_id}>
-                      {pr.product_name} ({pr.product_code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+                    {/* Auto-Derived Supplier Info Card */}
+                    <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-1">
+                      <span className="text-[10px] text-indigo-700 font-bold uppercase tracking-wider block">
+                        Derived Supplier Payee
+                      </span>
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span>{derivedSupplier?.supplier_name || 'No Supplier Linked'}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {derivedSupplier?.city || 'India'} • Code: <strong className="font-mono text-indigo-800">{derivedSupplier?.supplier_code || selectedPo?.supplier_id?.slice(0, 8) || 'SUP'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Product SKU Specification</label>
+                    <select
+                      value={form.product_id}
+                      onChange={(e) => setForm({ ...form, product_id: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                    >
+                      {products.map((pr) => (
+                        <option key={pr.product_id} value={pr.product_id}>
+                          {pr.product_name} ({pr.product_code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Detailed Quantities Breakdown (Section 26 of updates5.md) */}
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">

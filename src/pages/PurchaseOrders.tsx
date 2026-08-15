@@ -21,13 +21,19 @@ import {
   DollarSign,
   ArrowRight,
   ExternalLink,
+  Edit,
+  History,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { Drawer } from '../components/common/Drawer';
 import { getAiSupplierRecommendation, SupplierAiRecommendation } from '../services/ai/supplierRecommendationService';
 import { routeNotification } from '../services/notifications/notificationRouter';
+import { PoEditHistory } from '../types/database';
 
 export const PurchaseOrders: React.FC = () => {
   const navigate = useNavigate();
@@ -40,7 +46,7 @@ export const PurchaseOrders: React.FC = () => {
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<'ALL' | 'DRAFTS' | 'SUPPLIER_SENT' | 'REJECTED' | 'SUPPLIER_REJECTED'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'DRAFTS' | 'SUPPLIER_SENT' | 'ACCEPTED_BY_SUPPLIER' | 'REJECTED' | 'SUPPLIER_REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('po') || searchParams.get('pr') || '');
 
   useEffect(() => {
@@ -71,6 +77,25 @@ export const PurchaseOrders: React.FC = () => {
   const [openRejectModal, setOpenRejectModal] = useState(false);
   const [rejectingPoId, setRejectingPoId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
+
+  // PO Edit Modal State (Section 1 of updates6.md)
+  const [openEditModal, setOpenEditModal] = useState(false);
+  const [editingPo, setEditingPo] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    supplier_id: '',
+    quantity: 100,
+    unit_price: 50,
+    product_id: '',
+    warehouse_id: '',
+    payment_terms: 'NET 30',
+    reason: '',
+  });
+
+  // PO Edit History State (Section 1 of updates6.md)
+  const [openHistoryDrawer, setOpenHistoryDrawer] = useState(false);
+  const [historyPo, setHistoryPo] = useState<any | null>(null);
+  const [editHistoryList, setEditHistoryList] = useState<PoEditHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -223,6 +248,163 @@ export const PurchaseOrders: React.FC = () => {
     }
   };
 
+  // Open Edit Modal for Draft PO (Section 1 of updates6.md)
+  const handleOpenEditPo = (po: any) => {
+    if (!canApprovePO()) {
+      showSnackbar('Permission Denied: Only Procurement Officers can edit Purchase Orders.', 'error');
+      return;
+    }
+
+    const item = po.po_items?.[0];
+    setEditingPo(po);
+    setEditForm({
+      supplier_id: po.supplier_id || suppliers[0]?.supplier_id || '',
+      quantity: item?.ordered_quantity || 100,
+      unit_price: item?.unit_price || 50,
+      product_id: item?.product_id || products[0]?.product_id || '',
+      warehouse_id: po.warehouse_id || warehouses[0]?.warehouse_id || '',
+      payment_terms: po.payment_terms || 'NET 30',
+      reason: '',
+    });
+    setOpenEditModal(true);
+  };
+
+  // Submit PO Edit with full audit trail (Section 1 of updates6.md)
+  const handleSavePoEdit = async () => {
+    if (!editingPo) return;
+    if (!canApprovePO()) {
+      showSnackbar('Permission Denied: Only Procurement Officers can edit POs.', 'error');
+      return;
+    }
+    if (!editForm.reason.trim()) {
+      showSnackbar('Please provide a reason for editing this Purchase Order.', 'error');
+      return;
+    }
+    if (editForm.quantity <= 0 || editForm.unit_price <= 0) {
+      showSnackbar('Quantity and Unit Price must be greater than zero.', 'error');
+      return;
+    }
+
+    try {
+      const oldItem = editingPo.po_items?.[0];
+      const newSubtotal = editForm.quantity * editForm.unit_price;
+      const newTax = newSubtotal * 0.18;
+      const newTotal = newSubtotal + newTax;
+
+      // 1. Update purchase_orders table
+      const { error: poUpdateErr } = await supabase
+        .from('purchase_orders')
+        .update({
+          supplier_id: editForm.supplier_id,
+          warehouse_id: editForm.warehouse_id,
+          payment_terms: editForm.payment_terms,
+          subtotal: newSubtotal,
+          tax_amount: newTax,
+          total_amount: newTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('po_id', editingPo.po_id);
+
+      if (poUpdateErr) throw poUpdateErr;
+
+      // 2. Update po_items
+      if (oldItem?.po_item_id) {
+        await supabase
+          .from('po_items')
+          .update({
+            product_id: editForm.product_id,
+            ordered_quantity: editForm.quantity,
+            unit_price: editForm.unit_price,
+            line_total: newSubtotal,
+          })
+          .eq('po_item_id', oldItem.po_item_id);
+      }
+
+      // 3. Record field diffs to po_edit_history
+      const changes: Array<{ field: string; prev: any; next: any }> = [];
+      if (editingPo.supplier_id !== editForm.supplier_id) {
+        const prevSup = suppliers.find((s) => s.supplier_id === editingPo.supplier_id)?.supplier_name || editingPo.supplier_id;
+        const nextSup = suppliers.find((s) => s.supplier_id === editForm.supplier_id)?.supplier_name || editForm.supplier_id;
+        changes.push({ field: 'Contract Supplier', prev: prevSup, next: nextSup });
+      }
+      if (oldItem?.ordered_quantity !== editForm.quantity) {
+        changes.push({ field: 'Ordered Quantity', prev: oldItem?.ordered_quantity, next: editForm.quantity });
+      }
+      if (oldItem?.unit_price !== editForm.unit_price) {
+        changes.push({ field: 'Unit Price (INR)', prev: oldItem?.unit_price, next: editForm.unit_price });
+      }
+      if (oldItem?.product_id !== editForm.product_id) {
+        const prevProd = products.find((p) => p.product_id === oldItem?.product_id)?.product_name || oldItem?.product_id;
+        const nextProd = products.find((p) => p.product_id === editForm.product_id)?.product_name || editForm.product_id;
+        changes.push({ field: 'Product SKU', prev: prevProd, next: nextProd });
+      }
+      if (editingPo.warehouse_id !== editForm.warehouse_id) {
+        const prevWh = warehouses.find((w) => w.warehouse_id === editingPo.warehouse_id)?.warehouse_name || editingPo.warehouse_id;
+        const nextWh = warehouses.find((w) => w.warehouse_id === editForm.warehouse_id)?.warehouse_name || editForm.warehouse_id;
+        changes.push({ field: 'Delivery Warehouse', prev: prevWh, next: nextWh });
+      }
+      if (editingPo.payment_terms !== editForm.payment_terms) {
+        changes.push({ field: 'Payment Terms', prev: editingPo.payment_terms, next: editForm.payment_terms });
+      }
+
+      // Insert audit history rows
+      const historyRows = changes.map((c) => ({
+        po_id: editingPo.po_id,
+        editor_user_id: currentUser?.user_id,
+        editor_name: currentUser?.full_name || 'Procurement Officer',
+        editor_role: currentUser?.role || 'PROCUREMENT_OFFICER',
+        field_changed: c.field,
+        previous_value: String(c.prev),
+        new_value: String(c.next),
+        reason: editForm.reason.trim(),
+        timestamp: new Date().toISOString(),
+      }));
+
+      if (historyRows.length > 0) {
+        try {
+          await supabase.from('po_edit_history').insert(historyRows);
+        } catch (histErr) {
+          console.warn('po_edit_history insert note:', histErr);
+        }
+      }
+
+      await logAuditAction('PO_EDITED', 'purchase_orders', editingPo.po_id, {
+        po_number: editingPo.po_number,
+        changes,
+        reason: editForm.reason.trim(),
+      });
+
+      showSnackbar(`PO #${editingPo.po_number} successfully updated by Procurement Officer with audit trail.`, 'success');
+      setOpenEditModal(false);
+      setEditingPo(null);
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar(`Failed to save PO edit: ${err.message}`, 'error');
+    }
+  };
+
+  // Open Edit History Drawer (Section 1 of updates6.md)
+  const handleOpenHistoryDrawer = async (po: any) => {
+    setHistoryPo(po);
+    setOpenHistoryDrawer(true);
+    setLoadingHistory(true);
+    try {
+      const { data, error } = await supabase
+        .from('po_edit_history')
+        .select('*')
+        .eq('po_id', po.po_id)
+        .order('timestamp', { ascending: false });
+
+      if (error) throw error;
+      setEditHistoryList(data || []);
+    } catch (err: any) {
+      console.warn('Fetch edit history warning:', err);
+      setEditHistoryList([]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   // Procurement Approves Draft PO
   const handleApproveDraftPo = async (poId: string, poNumber: string) => {
     if (!canApprovePO()) {
@@ -369,11 +551,11 @@ export const PurchaseOrders: React.FC = () => {
             <ShoppingCart className="w-5 h-5 text-blue-600" />
             <span>Purchase Orders (PO) Register</span>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              AI AUTO-GENERATION
+              PROCUREMENT CONTROLLED
             </span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Contractual purchase commitments generated from approved PRs, reviewed by Procurement, and transmitted to suppliers.
+            Contractual purchase commitments generated from approved PRs, editable and authorized exclusively by Procurement Officers.
           </p>
         </div>
 
@@ -512,8 +694,20 @@ export const PurchaseOrders: React.FC = () => {
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {filteredPos.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    No purchase orders found matching the current tab.
+                  <td colSpan={7} className="py-16 text-center text-slate-400">
+                    <ShoppingCart className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
+                    <span className="font-bold text-slate-700 block text-sm">No Purchase Orders yet</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">Purchase Orders will automatically appear here once approved PRs are processed by Procurement.</span>
+                    <button
+                      onClick={() => {
+                        setOpenCreate(true);
+                        setAiRec(null);
+                      }}
+                      className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Issue First PO</span>
+                    </button>
                   </td>
                 </tr>
               ) : (
@@ -523,6 +717,7 @@ export const PurchaseOrders: React.FC = () => {
                   const isApproved = po.status === 'APPROVED' || po.status === 'READY_TO_SEND';
                   const isSent = po.status === 'SENT_TO_SUPPLIER';
                   const isSupplierRejected = po.status === 'SUPPLIER_REJECTED';
+                  const isLocked = isSent || po.status === 'ACCEPTED_BY_SUPPLIER' || po.status === 'CONFIRMED' || po.status === 'DISPATCHED' || po.status === 'RECEIVED';
 
                   return (
                     <tr key={po.po_id} className={`hover:bg-slate-50/70 transition-colors ${isSupplierRejected ? 'bg-rose-50/20' : ''}`}>
@@ -584,6 +779,27 @@ export const PurchaseOrders: React.FC = () => {
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Edit PO Action (Section 1 of updates6.md) */}
+                          {!isLocked && canApprovePO() && (
+                            <button
+                              onClick={() => handleOpenEditPo(po)}
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                              title="Edit PO Draft (Procurement Officer Only)"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Edit</span>
+                            </button>
+                          )}
+
+                          {/* Audit History Action (Section 1 of updates6.md) */}
+                          <button
+                            onClick={() => handleOpenHistoryDrawer(po)}
+                            className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs transition-colors cursor-pointer"
+                            title="View PO Audit & Edit History"
+                          >
+                            <History className="w-3.5 h-3.5" />
+                          </button>
+
                           {isDraftAi && canApprovePO() && (
                             <>
                               <button
@@ -640,6 +856,276 @@ export const PurchaseOrders: React.FC = () => {
         </div>
       </div>
 
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* PO Edit Modal (Section 1 of updates6.md)                       */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      <Modal
+        isOpen={openEditModal}
+        onClose={() => setOpenEditModal(false)}
+        title={`Edit Draft PO: ${editingPo?.po_number || ''}`}
+        subtitle="Procurement Officer Authorization — Modify fields and record mandatory edit reason"
+        maxWidth="lg"
+        footer={
+          <>
+            <button
+              onClick={() => setOpenEditModal(false)}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSavePoEdit}
+              className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-md shadow-blue-600/20 cursor-pointer flex items-center gap-1.5"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Save & Log PO Edits</span>
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+            <span>
+              All edits will be logged with your identity (<strong>{currentUser?.full_name}</strong>) and preserved alongside original AI baseline values.
+            </span>
+          </div>
+
+          {/* Supplier Selection in Edit Mode */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-bold text-slate-800">
+                Contract Supplier Partner <span className="text-rose-500">*</span>
+              </label>
+              {suppliers.length > 1 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!editForm.product_id || editForm.quantity <= 0) return;
+                    try {
+                      showSnackbar('Gemini evaluating optimal supplier for edited PO...', 'info');
+                      const candidates = suppliers.map((s) => ({
+                        supplier_id: s.supplier_id,
+                        supplier_name: s.supplier_name,
+                        city: s.city || 'India',
+                        quality_score: 94,
+                        delivery_score: 92,
+                        overall_score: 93,
+                        unit_price: editForm.unit_price,
+                        lead_time_days: 3,
+                        exception_count: 0,
+                        capacity_units: 5000,
+                      }));
+                      const rec = await getAiSupplierRecommendation(
+                        editingPo.po_id,
+                        editForm.product_id,
+                        editForm.quantity,
+                        candidates
+                      );
+                      if (rec?.recommended_supplier_id) {
+                        setEditForm((prev) => ({ ...prev, supplier_id: rec.recommended_supplier_id }));
+                        showSnackbar(`AI Recommended: ${rec.recommended_supplier_name}`, 'success');
+                      }
+                    } catch (e: any) {
+                      console.warn(e);
+                    }
+                  }}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  <span>AI Re-Rank Suppliers</span>
+                </button>
+              )}
+            </div>
+
+            {suppliers.length === 0 ? (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800">
+                No registered suppliers found in system. Please add a supplier in the Suppliers Directory.
+              </div>
+            ) : (
+              <select
+                value={editForm.supplier_id}
+                onChange={(e) => setEditForm({ ...editForm, supplier_id: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:outline-hidden focus:border-blue-500"
+              >
+                {suppliers.map((s) => (
+                  <option key={s.supplier_id} value={s.supplier_id}>
+                    {s.supplier_name} ({s.supplier_code || s.supplier_id}) — {s.email} ({s.city})
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {(() => {
+              const currentSup = suppliers.find((s) => s.supplier_id === editForm.supplier_id);
+              if (!currentSup) return null;
+              return (
+                <div className="mt-1.5 px-3 py-2 rounded-lg bg-slate-100 text-[11px] flex items-center justify-between text-slate-700">
+                  <span>ID: <strong className="text-blue-700">{currentSup.supplier_code || currentSup.supplier_id}</strong></span>
+                  <span>Email: <strong className="text-slate-900">{currentSup.email}</strong></span>
+                  <span>Location: <strong className="text-slate-800">{currentSup.city}</strong></span>
+                </div>
+              );
+            })()}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">Product SKU</label>
+              <select
+                value={editForm.product_id}
+                onChange={(e) => setEditForm({ ...editForm, product_id: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+              >
+                {products.map((p) => (
+                  <option key={p.product_id} value={p.product_id}>
+                    {p.product_name} ({p.unit_of_measure || 'units'})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">Delivery Destination</label>
+              <select
+                value={editForm.warehouse_id}
+                onChange={(e) => setEditForm({ ...editForm, warehouse_id: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+              >
+                {warehouses.map((w) => (
+                  <option key={w.warehouse_id} value={w.warehouse_id}>
+                    {w.warehouse_name} ({w.city})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">Ordered Quantity *</label>
+              <input
+                type="number"
+                min={1}
+                value={editForm.quantity}
+                onChange={(e) => setEditForm({ ...editForm, quantity: Number(e.target.value) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">Unit Price (INR) *</label>
+              <input
+                type="number"
+                min={0.1}
+                step={0.01}
+                value={editForm.unit_price}
+                onChange={(e) => setEditForm({ ...editForm, unit_price: Number(e.target.value) })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">Payment Terms</label>
+              <select
+                value={editForm.payment_terms}
+                onChange={(e) => setEditForm({ ...editForm, payment_terms: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+              >
+                <option value="NET 30">NET 30</option>
+                <option value="NET 45">NET 45</option>
+                <option value="NET 60">NET 60</option>
+                <option value="IMMEDIATE">Immediate Settlement</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+            <span className="text-slate-500 font-medium">Recalculated Contract Value (Inc. 18% GST):</span>
+            <strong className="text-base font-extrabold text-blue-700">
+              ₹{(editForm.quantity * editForm.unit_price * 1.18).toLocaleString()}
+            </strong>
+          </div>
+
+          <div>
+            <label className="font-bold text-slate-800 block mb-1">
+              Procurement Edit Reason * <span className="text-rose-500 font-normal">(Mandatory audit log)</span>
+            </label>
+            <textarea
+              rows={2}
+              required
+              placeholder="e.g. Adjusted batch volume to align with warehouse bin capacity; negotiated revised commercial unit rate."
+              value={editForm.reason}
+              onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })}
+              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-blue-500"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* PO Edit History Drawer (Section 1 of updates6.md)              */}
+      {/* ══════════════════════════════════════════════════════════════ */}
+      <Drawer
+        isOpen={openHistoryDrawer}
+        onClose={() => setOpenHistoryDrawer(false)}
+        title={`PO Audit History: ${historyPo?.po_number || ''}`}
+        subtitle="Chronological trail of all human modifications and AI baseline versions"
+        width="md"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">PURCHASE ORDER</span>
+            <span className="text-sm font-extrabold text-slate-900">{historyPo?.po_number}</span>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              Current Contract Amount: <strong>₹{Number(historyPo?.total_amount || 0).toLocaleString()}</strong>
+            </div>
+          </div>
+
+          {loadingHistory ? (
+            <div className="py-8 text-center text-slate-400">Loading audit history...</div>
+          ) : editHistoryList.length === 0 ? (
+            <div className="p-6 text-center rounded-xl bg-slate-50 border border-slate-200">
+              <Sparkles className="w-8 h-8 text-indigo-500 mx-auto mb-2 opacity-60" />
+              <h4 className="font-bold text-slate-800">Original Baseline Version</h4>
+              <p className="text-slate-500 text-[11px] mt-1">
+                No manual revisions recorded for this PO. It is currently at its initial approved baseline.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <h4 className="font-bold text-slate-900 text-xs">Modification Log ({editHistoryList.length} changes)</h4>
+              {editHistoryList.map((entry, idx) => (
+                <div key={entry.edit_id || idx} className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="font-bold text-blue-600">{entry.editor_name || 'Procurement Officer'}</span>
+                    <span>{new Date(entry.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div className="font-bold text-slate-800 text-xs">
+                    Field Modified: <span className="text-indigo-700">{entry.field_changed}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px] p-2 bg-slate-50 rounded-lg">
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Previous Value</span>
+                      <span className="font-semibold text-rose-700 line-through">{String(entry.previous_value)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">New Value</span>
+                      <span className="font-semibold text-emerald-700">{String(entry.new_value)}</span>
+                    </div>
+                  </div>
+                  {entry.reason && (
+                    <div className="text-[11px] text-slate-600 italic mt-1">
+                      Reason: "{entry.reason}"
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Drawer>
+
       {/* Create PO Modal (Manual fallback - NO OCR) */}
       <Modal
         isOpen={openCreate}
@@ -666,55 +1152,80 @@ export const PurchaseOrders: React.FC = () => {
         }
       >
         <div className="space-y-4 text-xs">
-          {/* AI Recommendation Trigger */}
-          <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-600" />
+          {/* AI vs Manual Supplier Selection */}
+          {suppliers.length === 0 ? (
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+              <div className="font-bold flex items-center gap-1.5 mb-1">
+                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                <span>No Registered Suppliers Found</span>
+              </div>
+              <p className="text-[11px] text-amber-700">
+                Please register certified vendors in the Supplier Directory before issuing Purchase Orders.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  <div>
+                    <strong className="text-indigo-950 block">Gemini Supplier Quality Ranking</strong>
+                    <span className="text-[11px] text-indigo-700">Evaluate delivery reliability, quality check scores & contract rates</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRunAiEvaluation}
+                  disabled={runningAiRec}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {runningAiRec ? 'Evaluating...' : '🤖 AI Pick Supplier'}
+                </button>
+              </div>
+
               <div>
-                <strong className="text-indigo-950 block">Gemini Supplier Selection</strong>
-                <span className="text-[11px] text-indigo-700">Rank suppliers by quality, OTIF rate & capacity</span>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Contract Supplier Partner <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={newPo.supplier_id}
+                  onChange={(e) => setNewPo({ ...newPo, supplier_id: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:outline-hidden focus:border-blue-500"
+                >
+                  {suppliers.map((s) => (
+                    <option key={s.supplier_id} value={s.supplier_id}>
+                      {s.supplier_name} ({s.supplier_code || s.supplier_id}) — {s.email} ({s.city})
+                    </option>
+                  ))}
+                </select>
+                {(() => {
+                  const s = suppliers.find((x) => x.supplier_id === newPo.supplier_id);
+                  if (!s) return null;
+                  return (
+                    <div className="mt-1 px-3 py-1.5 rounded-lg bg-slate-100 text-[11px] flex items-center justify-between text-slate-700">
+                      <span>ID: <strong className="text-blue-700">{s.supplier_code || s.supplier_id}</strong></span>
+                      <span>Email: <strong className="text-slate-900">{s.email}</strong></span>
+                      <span>Rating: <strong className="text-amber-600">{s.rating || 4.8}⭐</strong></span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleRunAiEvaluation}
-              disabled={runningAiRec}
-              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer shadow-xs disabled:opacity-50"
+          )}
+
+          <div>
+            <label className="font-semibold text-slate-700 block mb-1">Destination Facility</label>
+            <select
+              value={newPo.warehouse_id}
+              onChange={(e) => setNewPo({ ...newPo, warehouse_id: e.target.value })}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
             >
-              {runningAiRec ? 'Evaluating...' : 'Run Evaluation'}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Target Supplier</label>
-              <select
-                value={newPo.supplier_id}
-                onChange={(e) => setNewPo({ ...newPo, supplier_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
-              >
-                {suppliers.map((s) => (
-                  <option key={s.supplier_id} value={s.supplier_id}>
-                    {s.supplier_name} ({s.city})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Destination Facility</label>
-              <select
-                value={newPo.warehouse_id}
-                onChange={(e) => setNewPo({ ...newPo, warehouse_id: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
-              >
-                {warehouses.map((w) => (
-                  <option key={w.warehouse_id} value={w.warehouse_id}>
-                    {w.warehouse_name} ({w.city})
-                  </option>
-                ))}
-              </select>
-            </div>
+              {warehouses.map((w) => (
+                <option key={w.warehouse_id} value={w.warehouse_id}>
+                  {w.warehouse_name} ({w.city})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
