@@ -32,6 +32,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { parseNlpPurchaseRequisition, NlpPrExtractedFields } from '../services/ai/prNlpService';
 import { getAiSupplierRecommendation } from '../services/ai/supplierRecommendationService';
+import { sendPrRequestedNotification } from '../services/emailService';
 
 export const PurchaseRequisitions: React.FC = () => {
   const navigate = useNavigate();
@@ -254,7 +255,28 @@ export const PurchaseRequisitions: React.FC = () => {
         link: '/purchase-requisitions',
       });
 
-      showSnackbar(`Requisition #${prNumber} confirmed and submitted for Procurement review!`, 'success');
+      // Dispatch EmailJS Notification to all PR Officers in system (User Request)
+      const targetProduct = products.find((p) => p.product_id === newPr.product_id);
+      const targetWarehouse = warehouses.find((w) => w.warehouse_id === newPr.warehouse_id);
+
+      const emailResult = await sendPrRequestedNotification({
+        prId: pr.pr_id,
+        prNumber: prNumber,
+        requestedByWorker: currentUser?.full_name || 'Worker',
+        productName: targetProduct?.product_name || 'Component Units',
+        quantity: newPr.quantity,
+        priority: newPr.priority || 'MEDIUM',
+        warehouseName: targetWarehouse?.warehouse_name || 'Central Logistics DC',
+        requiredDate: newPr.required_date,
+        reason: newPr.reason || (createMode === 'nlp' ? nlpPrompt : undefined),
+      });
+
+      if (emailResult.totalSent > 0) {
+        showSnackbar(`Requisition #${prNumber} submitted and notification email dispatched to Procurement Officers!`, 'success');
+      } else {
+        showSnackbar(`Requisition #${prNumber} confirmed and submitted for Procurement review!`, 'success');
+      }
+
       setOpenCreate(false);
       setExtractedDraft(null);
       setNlpPrompt('');

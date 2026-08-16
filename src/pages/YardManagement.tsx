@@ -101,7 +101,7 @@ export const YardManagement: React.FC = () => {
         supabase
           .from('shipments')
           .select('*, purchase_orders(po_number, supplier_id, suppliers(supplier_name))')
-          .in('status', ['IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING']),
+          .in('status', ['IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING', 'DISPATCHED', 'PARTIALLY_DISPATCHED']),
         supabase.from('purchase_orders').select('*, suppliers(supplier_name)'),
         supabase.from('parking_slots').select('*, yards(yard_name)').order('slot_code'),
       ]);
@@ -305,9 +305,21 @@ export const YardManagement: React.FC = () => {
         .update({ status: 'OCCUPIED' })
         .eq('dock_id', selectedDockId);
 
+      // 4. Update Shipment status to UNLOADING
+      if (assignDialog.entry?.shipment_id) {
+        await supabase
+          .from('shipments')
+          .update({
+            status: 'UNLOADING',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('shipment_id', assignDialog.entry.shipment_id);
+      }
+
       await logAuditAction('DOCK_ASSIGNED', 'dock_assignments', selectedDockId, {
         vehicle_number: assignDialog.entry?.trucks?.vehicle_number,
         yard_entry_id: assignDialog.entry?.yard_entry_id,
+        shipment_id: assignDialog.entry?.shipment_id,
       });
 
       addAlert({
@@ -317,7 +329,7 @@ export const YardManagement: React.FC = () => {
         link: '/yard',
       });
 
-      showSnackbar('Truck assigned to Dock bay successfully!', 'success');
+      showSnackbar('Truck assigned to Dock bay successfully! Unloading initiated.', 'success');
       setAssignDialog({ open: false, entry: null });
       triggerRefresh();
     } catch (err: any) {
@@ -353,7 +365,17 @@ export const YardManagement: React.FC = () => {
         .update({ status: 'DEPARTED', exit_time: new Date().toISOString() })
         .eq('yard_entry_id', entry.yard_entry_id);
 
-      showSnackbar('Unloading completed! Dock bay released and vehicle checked out.', 'success');
+      if (entry.shipment_id) {
+        await supabase
+          .from('shipments')
+          .update({
+            status: 'UNLOADED',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('shipment_id', entry.shipment_id);
+      }
+
+      showSnackbar('Unloading completed! Dock bay released and shipment queued for QC & GRN generation.', 'success');
       triggerRefresh();
       if (selectedDockModal) setSelectedDockModal(null);
     } catch (err: any) {
@@ -893,11 +915,16 @@ export const YardManagement: React.FC = () => {
 
           {/* Linked Shipment */}
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">Linked Inbound Shipment</label>
+            <label className="font-semibold text-slate-700 block mb-1.5">Linked Inbound Shipment & PO ID</label>
             <select
               value={checkInState.shipment_id}
               onChange={(e) => {
-                setCheckInState({ ...checkInState, shipment_id: e.target.value });
+                const selectedShp = shipments.find((s) => s.shipment_id === e.target.value);
+                setCheckInState({
+                  ...checkInState,
+                  shipment_id: e.target.value,
+                  truck_id: selectedShp?.truck_id || checkInState.truck_id,
+                });
               }}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
             >
@@ -910,7 +937,7 @@ export const YardManagement: React.FC = () => {
                 )
                 .map((s) => (
                   <option key={s.shipment_id} value={s.shipment_id}>
-                    {s.shipment_number} — {s.total_quantity} units — {s.purchase_orders?.po_number || 'No PO'}
+                    Shipment: {s.shipment_number} | PO: {s.purchase_orders?.po_number || 'N/A'} — {s.purchase_orders?.suppliers?.supplier_name || 'Vendor'} ({s.status})
                   </option>
               ))}
             </select>

@@ -16,6 +16,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Hash,
+  X,
+  Filter,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -268,15 +270,42 @@ export const Suppliers: React.FC = () => {
     }
   };
 
-  const filteredSuppliers = suppliers.filter(
-    (s) =>
-      !searchQuery ||
-      s.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.supplier_code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.supplier_id?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterRating, setFilterRating] = useState('ALL');
+
+  const filteredSuppliers = suppliers.filter((s) => {
+    // 1. Status Filter
+    if (filterStatus !== 'ALL' && s.status !== filterStatus) {
+      return false;
+    }
+
+    // 2. Rating Filter
+    if (filterRating === '4.5+' && (s.rating || 0) < 4.5) {
+      return false;
+    }
+    if (filterRating === '4.0+' && (s.rating || 0) < 4.0) {
+      return false;
+    }
+
+    // 3. Search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchName = s.supplier_name?.toLowerCase().includes(q);
+      const matchCity = s.city?.toLowerCase().includes(q);
+      const matchEmail = s.email?.toLowerCase().includes(q);
+      const matchCode = s.supplier_code?.toLowerCase().includes(q);
+      const matchId = s.supplier_id?.toLowerCase().includes(q);
+      const matchPhone = s.phone?.toLowerCase().includes(q);
+
+      if (!matchName && !matchCity && !matchEmail && !matchCode && !matchId && !matchPhone) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const hasSupplierFilters = filterStatus !== 'ALL' || filterRating !== 'ALL' || Boolean(searchQuery.trim());
 
   return (
     <div className="space-y-6 pb-12">
@@ -321,20 +350,77 @@ export const Suppliers: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter / Search Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative flex-1 w-full sm:max-w-md">
+      {/* Universal Filter + Search Bar (Updates 12 Sections 13 & 15) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Multi-Facet Category Filters: FILTER ➔ SEARCH */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center gap-1 font-bold text-slate-500 mr-1">
+              <span>Filter:</span>
+            </div>
+
+            {/* Status Filter */}
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700 hover:border-slate-300 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="INACTIVE">INACTIVE</option>
+              <option value="ON_HOLD">ON_HOLD</option>
+            </select>
+
+            {/* Rating Filter */}
+            <select
+              value={filterRating}
+              onChange={(e) => setFilterRating(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700 hover:border-slate-300 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Ratings</option>
+              <option value="4.5+">★ 4.5+ Rating</option>
+              <option value="4.0+">★ 4.0+ Rating</option>
+            </select>
+
+            {hasSupplierFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterStatus('ALL');
+                  setFilterRating('ALL');
+                  setSearchQuery('');
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset Filters</span>
+              </button>
+            )}
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium">
+            Showing <strong className="text-slate-900">{filteredSuppliers.length}</strong> of {suppliers.length} vendors
+          </div>
+        </div>
+
+        {/* Live Search Bar */}
+        <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search suppliers by Name, Supplier ID, Email, City..."
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500 font-medium"
+            placeholder="Search suppliers by Name, Supplier ID, Code, Email, Phone, City..."
+            className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500 font-medium"
           />
-        </div>
-        <div className="text-xs text-slate-500 font-medium">
-          Registered Vendors: <strong className="text-slate-900">{filteredSuppliers.length}</strong>
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

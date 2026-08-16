@@ -91,15 +91,32 @@ export const Shipments: React.FC = () => {
     }
   };
 
-  const filteredShipments = shipments.filter(
-    (s) =>
-      !searchQuery ||
-      s.shipment_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.purchase_orders?.po_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.origin?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.warehouses?.city?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const [statusFilter, setStatusFilter] = useState('ALL');
+
+  const filteredShipments = shipments.filter((s) => {
+    // 1. Status Filter
+    if (statusFilter !== 'ALL' && s.status !== statusFilter) {
+      return false;
+    }
+
+    // 2. Search query across shipment#, asn#, PO#, supplier, origin, dest
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchShp = s.shipment_number?.toLowerCase().includes(q) || s.shipment_id?.toLowerCase().includes(q);
+      const matchAsn = s.asn_number?.toLowerCase().includes(q);
+      const matchPo = s.purchase_orders?.po_number?.toLowerCase().includes(q);
+      const matchSup = s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(q);
+      const matchOrigin = s.origin?.toLowerCase().includes(q);
+      const matchDest = s.warehouses?.city?.toLowerCase().includes(q) || s.destination?.toLowerCase().includes(q);
+      const matchStatus = s.status?.toLowerCase().includes(q);
+
+      if (!matchShp && !matchAsn && !matchPo && !matchSup && !matchOrigin && !matchDest && !matchStatus) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   // Clicking a row only swaps the live map
   const handleTrackShipment = (shp: any) => {
@@ -188,15 +205,46 @@ export const Shipments: React.FC = () => {
             </span>
           </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search shipment#, PO#, vendor, city..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:border-blue-500 font-medium"
-            />
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            {/* Filter */}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:border-slate-300 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="READY_FOR_DRIVER">READY_FOR_DRIVER</option>
+              <option value="DISPATCHED">DISPATCHED</option>
+              <option value="IN_TRANSIT">IN_TRANSIT</option>
+              <option value="ARRIVED_AT_FACILITY">ARRIVED_AT_FACILITY</option>
+              <option value="AT_DOCK">AT_DOCK</option>
+              <option value="COMPLETED">COMPLETED</option>
+            </select>
+
+            {/* Search */}
+            <div className="relative flex-1 sm:w-64">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search shipment#, PO#, ASN, vendor..."
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:border-blue-500 font-medium"
+              />
+            </div>
+
+            {(statusFilter !== 'ALL' || searchQuery) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('ALL');
+                  setSearchQuery('');
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
           </div>
         </div>
 

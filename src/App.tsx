@@ -30,6 +30,7 @@ import { QualityCheckPage } from './pages/QualityCheck';
 import { SupplierPortal } from './pages/supplier/SupplierPortal';
 import { DriverPortal } from './pages/driver/DriverPortal';
 import Warehouses from './pages/Warehouses';
+import PoActionLandingPage from './pages/PoActionLandingPage';
 
 export const App: React.FC = () => {
   const location = useLocation();
@@ -44,6 +45,16 @@ export const App: React.FC = () => {
     localStorage.setItem('supply_sync_guide_seen', 'true');
     setOpenGuide(false);
   };
+
+  // If on PO Action landing route, allow public access for supplier email actions (Updates 12 Section 7)
+  if (location.pathname === '/po-action') {
+    return (
+      <>
+        <PoActionLandingPage />
+        <ToastContainer />
+      </>
+    );
+  }
 
   // If on login route or unauthenticated, show Auth page
   if (location.pathname === '/login') {
@@ -130,6 +141,7 @@ export const App: React.FC = () => {
             <Route path="/exceptions" element={<Exceptions />} />
 
             {/* Traceability & Common */}
+            <Route path="/po-action" element={<PoActionLandingPage />} />
             <Route path="/traceability" element={<Traceability />} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/products" element={<Products />} />

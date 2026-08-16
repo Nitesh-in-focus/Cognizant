@@ -3,6 +3,7 @@ import { sendTransactionalEmail } from '../emailService';
 import { defaultPersonaUsers } from '../../contexts/AppContext';
 
 export type AlertEventType =
+  | 'PR_CREATED'
   | 'PR_APPROVED'
   | 'PR_REJECTED'
   | 'PO_APPROVED'
@@ -49,6 +50,11 @@ export async function routeNotification(payload: RouteNotificationPayload): Prom
 
   // Routing matrix adhering strictly to Section 26 of updates4.md:
   switch (payload.event_type) {
+    case 'PR_CREATED':
+      // PR Created by Worker -> Procurement Officers
+      recipients.push({ email: defaultPersonaUsers.PROCUREMENT_OFFICER.email, role: 'PROCUREMENT_OFFICER' });
+      break;
+
     case 'PR_REJECTED':
       // PR Rejected: Worker + Procurement Officer
       recipients.push({ email: defaultPersonaUsers.WORKER.email, role: 'WORKER' });

@@ -61,45 +61,8 @@ export const DriverPortal: React.FC = () => {
   const fetchDriverTripData = async () => {
     try {
       setLoading(true);
-      // 1. Fetch active assigned shipment
-      const { data: shpData } = await supabase
-        .from('shipments')
-        .select(`
-          *,
-          purchase_orders(
-            po_number,
-            suppliers(supplier_name, city, phone),
-            warehouses(warehouse_name, city, address)
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
 
-      const { data: truckData } = await supabase
-        .from('trucks')
-        .select('*')
-        .limit(1)
-        .maybeSingle();
-
-      if (shpData) {
-        setActiveShipment(shpData);
-        setTripStatus((shpData.driver_status as any) || 'ACCEPTED');
-      }
-
-      if (truckData) {
-        setAssignedTruck(truckData);
-        const { data: locData } = await supabase
-          .from('truck_locations')
-          .select('*')
-          .eq('truck_id', truckData.truck_id)
-          .order('timestamp', { ascending: false })
-          .limit(5);
-
-        setLocations(locData || []);
-      }
-
-      // 2. Fetch driver incoming assignment requests from database/service
+      // 1. Fetch driver incoming assignment requests from database/service
       const allRequests = await fetchDriverRequests();
       // Targeted requests for this driver
       const targeted = allRequests.filter(
@@ -110,7 +73,124 @@ export const DriverPortal: React.FC = () => {
           r.status === 'PENDING'
       );
       setDriverRequests(targeted);
-      setDriverRequests(targeted);
+
+      // 2. Active dispatched statuses on the highway
+      const dispatchedStatuses = ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING', 'UNLOADING'];
+
+      // Find any request that this driver accepted
+      const acceptedRequest = allRequests.find(
+        (r) =>
+          (r.driver_id === currentDriverId ||
+            r.driver_code === currentDriverCode ||
+            r.driver_name === currentUser?.full_name) &&
+          r.status === 'ACCEPTED'
+      );
+
+      let activeShp: any = null;
+
+      // Check if accepted shipment has been officially dispatched by supplier
+      if (acceptedRequest?.shipment_id) {
+        const { data: reqShp } = await supabase
+          .from('shipments')
+          .select(`
+            *,
+            purchase_orders(
+              po_id,
+              po_number,
+              total_amount,
+              order_date,
+              status,
+              suppliers(supplier_id, supplier_name, city, phone),
+              warehouses(warehouse_name, city, address)
+            ),
+            trucks(*)
+          `)
+          .eq('shipment_id', acceptedRequest.shipment_id)
+          .in('status', dispatchedStatuses)
+          .maybeSingle();
+
+        if (reqShp) {
+          activeShp = reqShp;
+        }
+      }
+
+      // If not from accepted request, check direct driver assignment in shipments table
+      if (!activeShp) {
+        // Query shipments that have been DISPATCHED and assigned to this driver
+        const { data: directShpList } = await supabase
+          .from('shipments')
+          .select(`
+            *,
+            purchase_orders(
+              po_id,
+              po_number,
+              total_amount,
+              order_date,
+              status,
+              suppliers(supplier_id, supplier_name, city, phone),
+              warehouses(warehouse_name, city, address)
+            ),
+            trucks(*)
+          `)
+          .in('status', dispatchedStatuses)
+          .order('created_at', { ascending: false });
+
+        if (directShpList && directShpList.length > 0) {
+          // Find the one specifically belonging to this driver
+          const found = directShpList.find(
+            (s: any) =>
+              s.driver_id === currentDriverId ||
+              s.assigned_driver_id === currentDriverId ||
+              s.driver_phone === (currentUser as any)?.phone ||
+              s.driver_name === currentUser?.full_name
+          );
+
+          if (found) {
+            activeShp = found;
+          } else if (
+            currentUser?.role === 'TRUCK_DRIVER' ||
+            (currentUser?.role as string) === 'DRIVER' ||
+            currentUser?.role === 'SYSTEM_ADMIN' ||
+            !currentUser
+          ) {
+            // Active dispatched highway shipment available for carrier driver
+            activeShp = directShpList[0];
+          }
+        }
+      }
+
+      if (activeShp) {
+        setActiveShipment(activeShp);
+        setTripStatus((activeShp.driver_status as any) || 'ACCEPTED');
+
+        if (activeShp.trucks) {
+          setAssignedTruck(activeShp.trucks);
+        } else if (activeShp.truck_id) {
+          const { data: truckData } = await supabase
+            .from('trucks')
+            .select('*')
+            .eq('truck_id', activeShp.truck_id)
+            .maybeSingle();
+          if (truckData) setAssignedTruck(truckData);
+        }
+
+        const truckId = activeShp.truck_id || activeShp.trucks?.truck_id;
+        if (truckId) {
+          const { data: locData } = await supabase
+            .from('truck_locations')
+            .select('*')
+            .eq('truck_id', truckId)
+            .order('timestamp', { ascending: false })
+            .limit(5);
+
+          setLocations(locData || []);
+        }
+      } else {
+        // No task assigned and dispatched: Keep dashboard empty!
+        setActiveShipment(null);
+        setAssignedTruck(null);
+        setLocations([]);
+      }
     } catch (err: any) {
       console.error('Error fetching driver trip data:', err);
     } finally {
@@ -208,6 +288,73 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
+  // Driver "Reached at the Center" Handler (User Request)
+  const [markingReached, setMarkingReached] = useState(false);
+
+  const handleMarkReachedCenter = async () => {
+    if (!activeShipment) return;
+    try {
+      setMarkingReached(true);
+      const arrivalTimestamp = new Date().toISOString();
+
+      // 1. Update Shipment status to ARRIVED
+      const { error: shpErr } = await supabase
+        .from('shipments')
+        .update({
+          status: 'ARRIVED',
+          driver_status: 'ARRIVED',
+          arrived_at: arrivalTimestamp,
+          updated_at: arrivalTimestamp,
+        })
+        .eq('shipment_id', activeShipment.shipment_id);
+
+      if (shpErr) throw shpErr;
+
+      // 2. Update Truck status
+      if (assignedTruck) {
+        await supabase
+          .from('trucks')
+          .update({
+            status: 'IN_YARD',
+            last_location_update: arrivalTimestamp,
+          })
+          .eq('truck_id', assignedTruck.truck_id);
+
+        // 3. Log arrival waypoint
+        await supabase.from('truck_locations').insert([
+          {
+            truck_id: assignedTruck.truck_id,
+            shipment_id: activeShipment.shipment_id,
+            location_name: 'Logistics Fulfillment Center - Inbound Security Gate',
+            latitude: 18.7521,
+            longitude: 73.4024,
+            speed: 0,
+            status: 'ARRIVED',
+            timestamp: arrivalTimestamp,
+          },
+        ]);
+      }
+
+      await logAuditAction('DRIVER_REACHED_CENTER', 'shipments', activeShipment.shipment_id, {
+        shipment_number: activeShipment.shipment_number,
+        driver_name: currentUser?.full_name,
+        driver_code: currentDriverCode,
+        arrived_at: arrivalTimestamp,
+      });
+
+      showSnackbar(
+        `Arrival Logged: Shipment #${activeShipment.shipment_number} marked as ARRIVED at Logistics Center! Gate Post notified.`,
+        'success'
+      );
+
+      fetchDriverTripData();
+    } catch (err: any) {
+      showSnackbar('Failed to log arrival: ' + err.message, 'error');
+    } finally {
+      setMarkingReached(false);
+    }
+  };
+
   const historyData = getDriverHistorySummary(currentDriverId, currentDriverCode);
 
   return (
@@ -283,7 +430,7 @@ export const DriverPortal: React.FC = () => {
         </button>
       </div>
 
-      {/* ── TAB 1: MY LIVE JOURNEY (Section 6 of updates6.md) ── */}
+      {/* ── TAB 1: MY LIVE JOURNEY (Active Dispatched Trip) ── */}
       {activeTab === 'current_trip' && activeShipment && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
@@ -291,17 +438,36 @@ export const DriverPortal: React.FC = () => {
               <div>
                 <div className="text-xs font-black text-cyan-600 uppercase tracking-wider flex items-center gap-1.5">
                   <Navigation className="w-3.5 h-3.5" />
-                  <span>MY LIVE JOURNEY</span>
+                  <span>MY LIVE HIGHWAY MANIFEST</span>
                 </div>
-                <div className="text-xl font-extrabold text-slate-900 mt-0.5 flex items-center gap-2">
+                <div className="text-xl font-extrabold text-slate-900 mt-0.5 flex flex-wrap items-center gap-2">
                   <span>SHIPMENT: {activeShipment.shipment_number || 'SHP-1004'}</span>
+                  <span className="text-xs px-2.5 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    LINKED PO ID: {activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}
+                  </span>
                   <span className="text-xs px-2.5 py-0.5 rounded-md font-bold bg-blue-50 text-blue-700 border border-blue-200">
                     TRUCK: {assignedTruck?.vehicle_number || 'WB-12-AB-1234'}
                   </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {activeShipment.status !== 'ARRIVED' && activeShipment.status !== 'AT_GATE' && activeShipment.status !== 'WAITING' && activeShipment.status !== 'UNLOADED' && activeShipment.status !== 'COMPLETED' ? (
+                  <button
+                    onClick={handleMarkReachedCenter}
+                    disabled={markingReached}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer animate-bounce"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{markingReached ? 'Updating Status...' : 'Reached at the Center'}</span>
+                  </button>
+                ) : (
+                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-extrabold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>ARRIVED AT CENTER (AWAITING GATE-IN)</span>
+                  </div>
+                )}
+
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span>STATUS: {activeShipment.status || 'IN TRANSIT'}</span>
@@ -309,8 +475,15 @@ export const DriverPortal: React.FC = () => {
               </div>
             </div>
 
-            {/* Structured Telemetry Grid per Section 6 */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2 text-xs">
+            {/* Structured Telemetry Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 py-2 text-xs">
+              <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200">
+                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">LINKED PO ID</span>
+                <strong className="text-sm font-extrabold text-indigo-950 font-mono">
+                  {activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}
+                </strong>
+              </div>
+
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DRIVER ID</span>
                 <strong className="text-sm font-extrabold text-cyan-700 font-mono">
@@ -346,9 +519,12 @@ export const DriverPortal: React.FC = () => {
             {/* Route & Vehicle Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 border-t border-slate-100 text-xs">
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">FROM ➔ TO</span>
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">FROM ➔ TO (PO ORIGIN & DESTINATION)</span>
                 <div className="font-bold text-slate-900">FROM: {activeShipment.purchase_orders?.suppliers?.supplier_name || 'Supplier Facility'}</div>
                 <div className="text-slate-600 text-[11px]">TO: {activeShipment.purchase_orders?.warehouses?.warehouse_name || 'Customer Facility'}</div>
+                <div className="text-[10px] text-blue-600 font-mono font-semibold pt-1">
+                  Contract PO: #{activeShipment.purchase_orders?.po_number || 'N/A'} (₹{Number(activeShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')})
+                </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
@@ -368,7 +544,7 @@ export const DriverPortal: React.FC = () => {
             <div className="pt-2">
               <div className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-blue-600" />
-                <span>Live GPS Highway Route Map & Telematics Waypoints</span>
+                <span>Live GPS Highway Route Map & Telematics Waypoints (Linked to PO #{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'})</span>
               </div>
               <div className="rounded-xl overflow-hidden border border-slate-200 shadow-inner">
                 <TruckTrackingMap shipment={activeShipment} compact={false} />
@@ -385,7 +561,7 @@ export const DriverPortal: React.FC = () => {
                   <span>Live Highway GPS Telematics Transmitter</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Transmit authenticated satellite GPS coordinates directly from your mobile device to the Supply Sync Control Center.
+                  Transmit authenticated satellite GPS coordinates directly from your mobile device to the Supply Sync Control Center. Linked PO: <strong className="font-mono text-slate-800">#{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}</strong>.
                 </p>
               </div>
 
@@ -433,6 +609,44 @@ export const DriverPortal: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB 1: EMPTY STATE WHEN NO DISPATCHED TASK ── */}
+      {activeTab === 'current_trip' && !activeShipment && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-6">
+          <div className="w-20 h-20 rounded-3xl bg-slate-100 border border-slate-200 mx-auto flex items-center justify-center text-slate-400">
+            <Truck className="w-10 h-10 text-slate-400" />
+          </div>
+
+          <div className="max-w-md mx-auto space-y-2">
+            <h2 className="text-xl font-extrabold text-slate-900">
+              No Active Highway Manifest Assigned
+            </h2>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Your driver operational console is currently on standby. You have not been assigned or dispatched on an active delivery route by the supplier.
+            </p>
+            <p className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-left">
+              💡 <strong>System Workflow:</strong> Once the supplier assigns you to a shipment and clicks <strong>"Dispatch"</strong>, your live GPS route map, waypoints, linked <strong>PO ID</strong>, and the <strong>"Reached at the Center"</strong> arrival button will activate here automatically.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => setActiveTab('incoming_requests')}
+              className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+            >
+              <Clock className="w-4 h-4" />
+              <span>View Incoming Dispatch Requests ({driverRequests.filter((r) => r.status === 'PENDING').length})</span>
+            </button>
+            <button
+              onClick={fetchDriverTripData}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors flex items-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span>Check for New Dispatches</span>
+            </button>
           </div>
         </div>
       )}

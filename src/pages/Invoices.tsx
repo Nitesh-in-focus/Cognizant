@@ -22,6 +22,7 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { triggerFinanceExceptionNotification } from '../services/emailService';
 
 export const Invoices: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApproveInvoice, canReleasePayment, logAuditAction } = useApp();
@@ -281,13 +282,22 @@ export const Invoices: React.FC = () => {
       const diff = selectedInvoice.total_amount - (matchingData.po?.total_amount || selectedInvoice.total_amount);
       const excNumber = `EXC-FIN-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      // 1. Create exception record
+      const isValidUuid = (val?: string) => Boolean(val && val.length === 36 && val.includes('-'));
+      const validPoId = isValidUuid(selectedInvoice.po_id) ? selectedInvoice.po_id : null;
+      const validInvoiceId = isValidUuid(selectedInvoice.invoice_id) ? selectedInvoice.invoice_id : null;
+      const validShipmentId = isValidUuid(selectedInvoice.shipment_id)
+        ? selectedInvoice.shipment_id
+        : (isValidUuid(matchingData.shipment?.shipment_id) ? matchingData.shipment.shipment_id : null);
+      const validGrnId = isValidUuid(matchingData.grn?.grn_id) ? matchingData.grn.grn_id : null;
+
+      // 1. Create exception record in database
       const { error: excErr } = await supabase.from('exceptions').insert([
         {
           exception_number: excNumber,
-          po_id: selectedInvoice.po_id || null,
-          invoice_id: selectedInvoice.invoice_id,
-          shipment_id: selectedInvoice.shipment_id || null,
+          po_id: validPoId,
+          invoice_id: validInvoiceId,
+          grn_id: validGrnId,
+          shipment_id: validShipmentId,
           exception_type: 'PRICE_MISMATCH',
           expected_value: matchingData.po?.total_amount || 0,
           actual_value: selectedInvoice.total_amount,
@@ -316,6 +326,21 @@ export const Invoices: React.FC = () => {
       await logAuditAction('INVOICE_ESCALATED_TO_PR', 'invoices', selectedInvoice.invoice_id, {
         escalation_reason: escalationReason,
         exception_number: excNumber,
+      });
+
+      // Dispatch EmailJS Notification to PR Officer (Updates 12 Section 4)
+      await triggerFinanceExceptionNotification({
+        exceptionId: excNumber,
+        invoiceId: selectedInvoice.invoice_id,
+        invoiceNumber: selectedInvoice.invoice_number,
+        poId: selectedInvoice.po_id,
+        poNumber: matchingData.po?.po_number || selectedInvoice.purchase_orders?.po_number,
+        shipmentId: selectedInvoice.shipment_id,
+        shipmentNumber: matchingData.shipment?.shipment_number || selectedInvoice.shipments?.shipment_number,
+        supplierName: selectedInvoice.suppliers?.supplier_name || 'Vendor Partner',
+        mismatchType: 'PRICE_OR_QUANTITY_MISMATCH',
+        mismatchDetails: escalationReason,
+        amount: Math.abs(diff),
       });
 
       addAlert({

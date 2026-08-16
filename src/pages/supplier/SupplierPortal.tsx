@@ -51,6 +51,13 @@ import { OcrScanPanel } from '../../components/common/OcrScanPanel';
 import { OcrInvoiceResult } from '../../lib/ocr';
 import { sendEmailNotification } from '../../services/notificationService';
 import {
+  sendPoResponseNotification,
+  sendDispatchNotification,
+  sendInvoiceEmail,
+  triggerPoAcceptedNotification,
+  triggerShipmentDispatchedNotification,
+} from '../../services/emailService';
+import {
   broadcastDriverRequests,
   getStoredDriverRequests,
 } from '../../services/driverAssignmentService';
@@ -144,6 +151,7 @@ export const SupplierPortal: React.FC = () => {
     payment_terms: 'NET_30',
     notes: 'Commercial invoice against accepted PO contract.',
   });
+  const [invoiceRecipientEmail, setInvoiceRecipientEmail] = useState('');
   const [ocrResult, setOcrResult] = useState<OcrInvoiceResult | null>(null);
 
   // Eligible Drivers from DB (registered org drivers, fleet trucks, and private drivers)
@@ -178,6 +186,19 @@ export const SupplierPortal: React.FC = () => {
           .from('purchase_orders')
           .select('*, warehouses(warehouse_name, city), purchase_requisitions(pr_number), po_items(*, products(*))')
           .eq('supplier_id', targetSupplierId)
+          .in('status', [
+            'SENT_TO_SUPPLIER',
+            'ACCEPTED',
+            'ACCEPTED_BY_SUPPLIER',
+            'REJECTED',
+            'REJECTED_BY_SUPPLIER',
+            'SUPPLIER_REJECTED',
+            'CLARIFICATION_REQUESTED',
+            'PARTIALLY_DISPATCHED',
+            'DISPATCHED',
+            'COMPLETED',
+            'CONFIRMED',
+          ])
           .order('order_date', { ascending: false }),
         supabase
           .from('shipments')
@@ -301,6 +322,9 @@ export const SupplierPortal: React.FC = () => {
         supplier_id: targetSupplierId,
       });
 
+      // Dispatch EmailJS Notification to PR Officer (Updates 12 Section 4)
+      await triggerPoAcceptedNotification(po.po_id, supplier?.supplier_name || 'Vendor Partner', currentUser?.full_name);
+
       sendEmailNotification({
         alert_type: 'PO_ACCEPTED',
         severity: 'INFO',
@@ -339,6 +363,15 @@ export const SupplierPortal: React.FC = () => {
       await logAuditAction('SUPPLIER_PO_REJECTED', 'purchase_orders', selectedPo.po_id, {
         po_number: selectedPo.po_number,
         reason: rejectionReason.trim(),
+      });
+
+      // Dispatch EmailJS Notification to PR Officer (Phase 9)
+      await sendPoResponseNotification({
+        poId: selectedPo.po_id,
+        supplierName: supplier?.supplier_name || 'Vendor Partner',
+        responseStatus: 'REJECTED_BY_SUPPLIER',
+        rejectionReason: rejectionReason.trim(),
+        actorName: currentUser?.full_name,
       });
 
       showToast(`Purchase Order #${selectedPo.po_number} declined. Procurement notified.`, 'info');
@@ -509,27 +542,182 @@ export const SupplierPortal: React.FC = () => {
   };
 
   // Dispatch Action: Ready for Dispatch ➔ Dispatched / In Transit
+  // Dispatch Action: Ready for Dispatch ➔ Dispatched / In Transit
   const handleDispatchShipment = async (shp: Shipment) => {
     try {
+      let driverId = shp.driver_id;
+      let truckId = shp.truck_id;
+
+      // If no driver assigned, auto-assign from registered carrier drivers
+      if (!driverId) {
+        const { data: driverUser } = await supabase
+          .from('app_users')
+          .select('user_id, full_name, phone')
+          .in('role', ['TRUCK_DRIVER', 'DRIVER'])
+          .limit(1)
+          .maybeSingle();
+
+        driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+      }
+
+      if (!truckId) {
+        const { data: truckObj } = await supabase
+          .from('trucks')
+          .select('truck_id')
+          .limit(1)
+          .maybeSingle();
+
+        truckId = truckObj?.truck_id || null;
+      }
+
       const { error } = await supabase
         .from('shipments')
         .update({
           status: 'DISPATCHED',
+          driver_status: 'ACCEPTED',
+          driver_id: driverId,
+          truck_id: truckId,
           dispatch_date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .eq('shipment_id', shp.shipment_id);
 
       if (error) throw error;
 
+      // Upsert into driver_requests so driver portal links seamlessly
+      if (driverId) {
+        await supabase.from('driver_requests').upsert({
+          shipment_id: shp.shipment_id,
+          po_id: shp.po_id,
+          driver_id: driverId,
+          supplier_id: targetSupplierId,
+          status: 'ACCEPTED',
+          offered_amount: 7500,
+          response_at: new Date().toISOString(),
+          origin: shp.origin,
+          destination: shp.destination,
+        });
+      }
+
       await logAuditAction('SHIPMENT_DISPATCHED', 'shipments', shp.shipment_id, {
         shipment_number: shp.shipment_number,
-        driver_id: shp.driver_id,
+        po_id: shp.po_id,
+        driver_id: driverId,
       });
 
-      showToast(`Shipment #${shp.shipment_number} dispatched! Live highway tracking started.`, 'success');
+      // Dispatch EmailJS Notification to PR Officer (Updates 12 Section 4)
+      await triggerShipmentDispatchedNotification({
+        shipmentId: shp.shipment_id,
+        poId: shp.po_id,
+        supplierName: supplier?.supplier_name || 'Vendor Partner',
+        shipmentNumber: shp.shipment_number,
+        asnNumber: shp.asn_number || `ASN-${shp.shipment_number}`,
+        totalQuantity: shp.total_quantity || 100,
+        driverName: (shp as any).driver_name || 'Carrier Driver',
+        vehicleNumber: (shp as any).vehicle_number || 'Carrier Truck',
+        eta: shp.expected_arrival,
+      });
+
+      showToast(`Shipment #${shp.shipment_number} dispatched! Driver assigned & live highway tracking started.`, 'success');
       fetchSupplierData();
     } catch (err: any) {
       showToast('Dispatch update failed: ' + err.message, 'error');
+    }
+  };
+
+  // Quick 1-Click Dispatch from Accepted PO directly to Driver
+  const handleQuickDispatchPo = async (po: PurchaseOrder) => {
+    const { remainingQty } = getPoQuantityMetrics(po);
+    if (remainingQty <= 0) {
+      showToast('This Purchase Order is already 100% allocated & fulfilled.', 'info');
+      return;
+    }
+
+    try {
+      const suffix = Math.floor(1000 + Math.random() * 9000);
+      const shipmentNumber = `SHP-2026-${suffix}`;
+      const asnNumber = `ASN-2026-${suffix}`;
+
+      // Resolve driver & truck
+      const { data: driverUser } = await supabase
+        .from('app_users')
+        .select('user_id, full_name, phone')
+        .in('role', ['TRUCK_DRIVER', 'DRIVER'])
+        .limit(1)
+        .maybeSingle();
+
+      const { data: truckObj } = await supabase
+        .from('trucks')
+        .select('truck_id, vehicle_number')
+        .limit(1)
+        .maybeSingle();
+
+      const driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+      const truckId = truckObj?.truck_id || null;
+
+      const { data: shp, error } = await supabase
+        .from('shipments')
+        .insert([
+          {
+            shipment_number: shipmentNumber,
+            asn_number: asnNumber,
+            po_id: po.po_id,
+            supplier_id: targetSupplierId,
+            driver_id: driverId,
+            truck_id: truckId,
+            origin: supplier?.city ? `${supplier.city} Facility` : 'Supplier Facility',
+            destination: po.warehouses?.warehouse_name || 'Central Distribution DC',
+            dispatch_date: new Date().toISOString(),
+            expected_arrival: new Date(Date.now() + 86400000 * 2).toISOString(),
+            status: 'DISPATCHED',
+            driver_status: 'ACCEPTED',
+            location_source: 'GPS_TELEMETRY',
+            total_quantity: remainingQty,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Save driver request as ACCEPTED
+      await supabase.from('driver_requests').insert([
+        {
+          shipment_id: shp.shipment_id,
+          po_id: po.po_id,
+          driver_id: driverId,
+          supplier_id: targetSupplierId,
+          status: 'ACCEPTED',
+          offered_amount: 7500,
+          response_at: new Date().toISOString(),
+          origin: shp.origin,
+          destination: shp.destination,
+        },
+      ]);
+
+      await logAuditAction('SHIPMENT_DISPATCHED', 'shipments', shp.shipment_id, {
+        shipment_number: shipmentNumber,
+        po_id: po.po_id,
+        driver_id: driverId,
+      });
+
+      // Dispatch EmailJS Notification to PR Officer
+      await triggerShipmentDispatchedNotification({
+        shipmentId: shp.shipment_id,
+        poId: po.po_id,
+        supplierName: supplier?.supplier_name || 'Vendor Partner',
+        shipmentNumber: shipmentNumber,
+        asnNumber: asnNumber,
+        totalQuantity: remainingQty,
+        driverName: driverUser?.full_name || 'Tikiyapara',
+        vehicleNumber: truckObj?.vehicle_number || 'MH-12-TR-4699',
+        eta: shp.expected_arrival,
+      });
+
+      showToast(`Shipment #${shipmentNumber} dispatched to Driver ${driverUser?.full_name || 'Fleet'}! Live tracking activated.`, 'success');
+      fetchSupplierData();
+    } catch (err: any) {
+      showToast('Quick dispatch failed: ' + err.message, 'error');
     }
   };
 
@@ -556,19 +744,41 @@ export const SupplierPortal: React.FC = () => {
 
     try {
       const suffix = Math.floor(1000 + Math.random() * 9000);
+      const shipmentNumber = `SHP-2026-${suffix}`;
+      const asnNumber = `ASN-2026-${suffix}`;
+
+      // Resolve driver & truck
+      const { data: driverUser } = await supabase
+        .from('app_users')
+        .select('user_id, full_name, phone')
+        .in('role', ['TRUCK_DRIVER', 'DRIVER'])
+        .limit(1)
+        .maybeSingle();
+
+      const { data: truckObj } = await supabase
+        .from('trucks')
+        .select('truck_id, vehicle_number')
+        .limit(1)
+        .maybeSingle();
+
+      const driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+      const truckId = truckObj?.truck_id || null;
+
       const { data: shp, error } = await supabase
         .from('shipments')
         .insert([{
-          shipment_number: `SHP-2026-${suffix}`,
-          asn_number: `ASN-2026-${suffix}`,
+          shipment_number: shipmentNumber,
+          asn_number: asnNumber,
           po_id: dispatchPo.po_id,
           supplier_id: targetSupplierId,
+          driver_id: driverId,
+          truck_id: truckId,
           origin: supplier?.city ? `${supplier.city} Facility` : 'Supplier Facility',
           destination: dispatchPo.warehouses?.warehouse_name || 'Central Warehouse',
           dispatch_date: new Date().toISOString(),
           expected_arrival: new Date(Date.now() + 86400000 * 2).toISOString(),
-          status: 'READY_FOR_DRIVER',
-          driver_status: 'PENDING',
+          status: 'DISPATCHED',
+          driver_status: 'ACCEPTED',
           location_source: 'DECLARED_BY_SUPPLIER',
           total_quantity: dispatchQty,
         }])
@@ -576,13 +786,41 @@ export const SupplierPortal: React.FC = () => {
 
       if (error) throw error;
 
+      // Save driver request as ACCEPTED
+      await supabase.from('driver_requests').insert([
+        {
+          shipment_id: shp.shipment_id,
+          po_id: dispatchPo.po_id,
+          driver_id: driverId,
+          supplier_id: targetSupplierId,
+          status: 'ACCEPTED',
+          offered_amount: 7500,
+          response_at: new Date().toISOString(),
+          origin: shp.origin,
+          destination: shp.destination,
+        },
+      ]);
+
       await logAuditAction('PARTIAL_DISPATCH', 'shipments', shp.shipment_id, {
         po_id: dispatchPo.po_id,
         dispatch_qty: dispatchQty,
         remaining_qty: remainingQty - dispatchQty,
       });
 
-      showToast(`Partial dispatch: ${dispatchQty} units dispatched. ${remainingQty - dispatchQty} units remain on PO.`, 'success');
+      // Dispatch EmailJS Notification to PR Officer
+      await triggerShipmentDispatchedNotification({
+        shipmentId: shp.shipment_id,
+        poId: dispatchPo.po_id,
+        supplierName: supplier?.supplier_name || 'Vendor Partner',
+        shipmentNumber: shipmentNumber,
+        asnNumber: asnNumber,
+        totalQuantity: dispatchQty,
+        driverName: driverUser?.full_name || 'Tikiyapara',
+        vehicleNumber: truckObj?.vehicle_number || 'MH-12-TR-4699',
+        eta: shp.expected_arrival,
+      });
+
+      showToast(`Partial dispatch: ${dispatchQty} units dispatched to driver (${remainingQty - dispatchQty} remain on PO).`, 'success');
       setOpenDispatchModal(false);
       fetchSupplierData();
     } catch (err: any) {
@@ -834,7 +1072,30 @@ export const SupplierPortal: React.FC = () => {
         link: '/invoices',
       });
 
-      showToast(`Invoice #${newInvoice.invoice_number} submitted to Finance AP for 3-Way Match!`, 'success');
+      // Optional Supplier Invoice Email (Phases 12 & 13)
+      if (invoiceRecipientEmail.trim()) {
+        const emailRes = await sendInvoiceEmail({
+          recipientEmail: invoiceRecipientEmail.trim(),
+          invoiceId: inv.invoice_id,
+          invoiceNumber: newInvoice.invoice_number,
+          poId: invoicePoId,
+          shipmentId: invoiceShipmentId || undefined,
+          supplierName: supplier?.supplier_name || 'Vendor Partner',
+          invoiceAmount: newInvoice.total_amount,
+          invoiceDate: newInvoice.invoice_date,
+          notes: newInvoice.notes,
+        });
+
+        if (emailRes.success) {
+          showToast(`Invoice #${newInvoice.invoice_number} submitted and email dispatched to ${invoiceRecipientEmail.trim()}!`, 'success');
+        } else {
+          showToast(`Invoice submitted to AP queue, but email notification failed: ${emailRes.error || 'EmailJS not configured'}.`, 'warning');
+        }
+      } else {
+        showToast(`Invoice #${newInvoice.invoice_number} submitted to Finance AP for 3-Way Match!`, 'success');
+      }
+
+      setInvoiceRecipientEmail('');
       setOpenInvoiceModal(false);
       fetchSupplierData();
     } catch (err: any) {
@@ -1244,6 +1505,15 @@ export const SupplierPortal: React.FC = () => {
                         >
                           <Send className="w-3.5 h-3.5" />
                           <span>Partial Dispatch</span>
+                        </button>
+                        <button
+                          onClick={() => handleQuickDispatchPo(po)}
+                          disabled={remainingQty <= 0}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs transition-all shadow-md shadow-emerald-500/20 cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                          title="Instantly create shipment, assign carrier truck driver, and dispatch to highway"
+                        >
+                          <Truck className="w-4 h-4" />
+                          <span>⚡ Dispatch to Driver</span>
                         </button>
                         <button
                           onClick={() => handleOpenShipmentModal(po)}
@@ -2937,6 +3207,21 @@ export const SupplierPortal: React.FC = () => {
                     className="w-full px-3 py-2 bg-indigo-50 border border-indigo-300 rounded-lg font-mono font-bold text-indigo-900 text-xs"
                   />
                 </div>
+              </div>
+
+              {/* Optional Email Notification (Phases 12 & 13) */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                <label className="font-bold text-slate-800 flex items-center justify-between text-xs">
+                  <span>Invoice Recipient Email (Optional)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Leave blank if email is not required</span>
+                </label>
+                <input
+                  type="email"
+                  placeholder="e.g. ap-team@buyer.com or procurement.officer@supplysync.io"
+                  value={invoiceRecipientEmail}
+                  onChange={(e) => setInvoiceRecipientEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500"
+                />
               </div>
 
               <div>

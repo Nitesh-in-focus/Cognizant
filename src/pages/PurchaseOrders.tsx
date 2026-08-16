@@ -33,7 +33,9 @@ import { Modal } from '../components/common/Modal';
 import { Drawer } from '../components/common/Drawer';
 import { getAiSupplierRecommendation, SupplierAiRecommendation } from '../services/ai/supplierRecommendationService';
 import { routeNotification } from '../services/notifications/notificationRouter';
+import { triggerSupplierPoEmail } from '../services/emailService';
 import { PoEditHistory } from '../types/database';
+import { Filter } from 'lucide-react';
 
 export const PurchaseOrders: React.FC = () => {
   const navigate = useNavigate();
@@ -511,36 +513,74 @@ export const PurchaseOrders: React.FC = () => {
         action_link: '/supplier',
       });
 
-      showSnackbar(`PO #${po.po_number} sent to ${po.suppliers?.supplier_name || 'supplier'}! Awaiting acceptance.`, 'success');
+      // Dispatch EmailJS PO Notification Email (Informational only - Phases 5, 7, 8, 24)
+      const emailRes = await triggerSupplierPoEmail(po.po_id, po.supplier_id);
+
+      if (emailRes.success) {
+        showSnackbar(`PO #${po.po_number} sent to ${po.suppliers?.supplier_name || 'supplier'}! Notification email sent.`, 'success');
+      } else {
+        showSnackbar(`PO #${po.po_number} sent to ${po.suppliers?.supplier_name || 'supplier'}, but notification email failed: ${emailRes.error || 'EmailJS not configured'}`, 'warning');
+      }
+
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
     }
   };
 
-  const filteredPos = pos.filter((p) => {
-    const matchSearch =
-      !searchQuery ||
-      p.po_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.suppliers?.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase());
+  const [filterSupplier, setFilterSupplier] = useState('ALL');
+  const [filterStatus, setFilterStatus] = useState('ALL');
 
+  const filteredPos = pos.filter((p) => {
+    // 1. Supplier filter
+    if (filterSupplier !== 'ALL' && p.supplier_id !== filterSupplier) {
+      return false;
+    }
+
+    // 2. Status filter
+    if (filterStatus !== 'ALL' && p.status !== filterStatus) {
+      return false;
+    }
+
+    // 3. Search query (PO Number, PR Number, Supplier Name, SKU/Product, Status)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchPo = p.po_number?.toLowerCase().includes(q) || p.po_id?.toLowerCase().includes(q);
+      const matchPr = p.purchase_requisitions?.pr_number?.toLowerCase().includes(q);
+      const matchSup = p.suppliers?.supplier_name?.toLowerCase().includes(q);
+      const matchStatus = p.status?.toLowerCase().includes(q);
+      const matchItems = p.po_items?.some(
+        (it: any) =>
+          it.products?.product_name?.toLowerCase().includes(q) ||
+          it.products?.product_code?.toLowerCase().includes(q) ||
+          it.item_name?.toLowerCase().includes(q)
+      );
+
+      if (!matchPo && !matchPr && !matchSup && !matchStatus && !matchItems) {
+        return false;
+      }
+    }
+
+    // 4. Tab filter
     if (activeTab === 'DRAFTS') {
-      return matchSearch && (p.status === 'DRAFT_AI_GENERATED' || p.status === 'DRAFT_AUTO_GENERATED' || p.status === 'APPROVED' || p.status === 'READY_TO_SEND');
+      return p.status === 'DRAFT_AI_GENERATED' || p.status === 'DRAFT_AUTO_GENERATED' || p.status === 'APPROVED' || p.status === 'READY_TO_SEND';
     }
     if (activeTab === 'SUPPLIER_SENT') {
-      return matchSearch && p.status === 'SENT_TO_SUPPLIER';
+      return p.status === 'SENT_TO_SUPPLIER';
     }
     if (activeTab === 'ACCEPTED_BY_SUPPLIER') {
-      return matchSearch && (p.status === 'ACCEPTED_BY_SUPPLIER' || p.status === 'CONFIRMED');
+      return p.status === 'ACCEPTED_BY_SUPPLIER' || p.status === 'CONFIRMED';
     }
     if (activeTab === 'REJECTED') {
-      return matchSearch && p.status === 'REJECTED';
+      return p.status === 'REJECTED';
     }
     if (activeTab === 'SUPPLIER_REJECTED') {
-      return matchSearch && (p.status === 'SUPPLIER_REJECTED' || p.status === 'CLARIFICATION_REQUESTED');
+      return p.status === 'SUPPLIER_REJECTED' || p.status === 'CLARIFICATION_REQUESTED';
     }
-    return matchSearch;
+    return true;
   });
+
+  const hasPoFilters = filterSupplier !== 'ALL' || filterStatus !== 'ALL' || Boolean(searchQuery.trim());
 
   return (
     <div className="space-y-6 pb-16">
@@ -560,23 +600,25 @@ export const PurchaseOrders: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
-          <button
-            onClick={triggerRefresh}
-            className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors shadow-xs cursor-pointer"
-            title="Refresh POs"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          {canApprovePO() && (
+            <button
+              onClick={() => {
+                setOpenCreate(true);
+                setAiRec(null);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/20 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Purchase Order</span>
+            </button>
+          )}
 
           <button
-            onClick={() => {
-              setOpenCreate(true);
-              setAiRec(null);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/20 cursor-pointer"
+            onClick={fetchData}
+            className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors shadow-xs cursor-pointer"
+            title="Refresh Orders"
           >
-            <Plus className="w-4 h-4" />
-            <span>Create PO (Manual)</span>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -660,17 +702,85 @@ export const PurchaseOrders: React.FC = () => {
         </button>
       </div>
 
-      {/* Filter / Search Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative flex-1 w-full sm:max-w-md">
+      {/* Universal Filter + Search Bar (Updates 12 Sections 13 & 14) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Multi-Facet Category Filters: FILTER ➔ SEARCH */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center gap-1 font-bold text-slate-500 mr-1">
+              <Filter className="w-3.5 h-3.5 text-blue-600" />
+              <span>Filter:</span>
+            </div>
+
+            {/* Supplier Filter */}
+            <select
+              value={filterSupplier}
+              onChange={(e) => setFilterSupplier(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700 hover:border-slate-300 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Suppliers ({suppliers.length})</option>
+              {suppliers.map((s) => (
+                <option key={s.supplier_id} value={s.supplier_id}>
+                  {s.supplier_name}
+                </option>
+              ))}
+            </select>
+
+            {/* Status Filter */}
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700 hover:border-slate-300 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="DRAFT_AI_GENERATED">DRAFT_AI_GENERATED</option>
+              <option value="APPROVED">APPROVED (Internal)</option>
+              <option value="SENT_TO_SUPPLIER">SENT_TO_SUPPLIER</option>
+              <option value="ACCEPTED_BY_SUPPLIER">ACCEPTED_BY_SUPPLIER</option>
+              <option value="REJECTED">REJECTED</option>
+              <option value="SUPPLIER_REJECTED">SUPPLIER_REJECTED</option>
+            </select>
+
+            {hasPoFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterSupplier('ALL');
+                  setFilterStatus('ALL');
+                  setSearchQuery('');
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset Filters</span>
+              </button>
+            )}
+          </div>
+
+          {/* Quick Counter */}
+          <div className="text-[11px] font-bold text-slate-400">
+            Showing <span className="text-slate-800">{filteredPos.length}</span> of {pos.length} orders
+          </div>
+        </div>
+
+        {/* Live Search Bar */}
+        <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by PO #, supplier name..."
+            placeholder="Search by PO ID, PR ID, Supplier Name, Product SKU, or Status..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500"
+            className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500 font-medium"
           />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
