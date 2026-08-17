@@ -16,13 +16,15 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { triggerExceptionResolvedNotification } from '../services/emailService';
 
 export const Exceptions: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert } = useApp();
+  const { refreshKey, triggerRefresh, showSnackbar, addAlert, currentUser, logAuditAction } = useApp();
 
   const [exceptions, setExceptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSubmittingResolution, setIsSubmittingResolution] = useState(false);
 
   // Resolution Modal State
   const [resolveTarget, setResolveTarget] = useState<any | null>(null);
@@ -40,9 +42,9 @@ export const Exceptions: React.FC = () => {
         .from('exceptions')
         .select(`
           *,
-          purchase_orders(po_number, total_amount, suppliers(supplier_name)),
-          invoices(invoice_number, total_amount),
-          goods_receipts(grn_number)
+          purchase_orders(po_id, po_number, total_amount, suppliers(supplier_name)),
+          invoices(invoice_id, invoice_number, total_amount),
+          goods_receipts(grn_id, grn_number)
         `)
         .order('created_at', { ascending: false });
 
@@ -56,43 +58,99 @@ export const Exceptions: React.FC = () => {
   };
 
   const handleResolveException = async () => {
-    try {
-      if (!resolveTarget) return;
+    if (!resolveTarget) return;
 
+    try {
+      setIsSubmittingResolution(true);
+      const actorName = currentUser?.full_name || 'Procurement Officer';
+      const formattedDescription = `${resolveTarget.description} [SETTLED via ${resolutionAction} by ${actorName}: ${
+        resolutionNote.trim() || 'Payment Hold Lifted'
+      }]`;
+
+      // 1. Mark Exception Record as RESOLVED
       const { error: excErr } = await supabase
         .from('exceptions')
         .update({
           status: 'RESOLVED',
           resolved_at: new Date().toISOString(),
-          description: `${resolveTarget.description} [RESOLVED via ${resolutionAction}: ${resolutionNote || 'Authorized by Finance Controller'}]`,
+          description: formattedDescription,
+          updated_at: new Date().toISOString(),
         })
         .eq('exception_id', resolveTarget.exception_id);
 
       if (excErr) throw excErr;
+
+      // 2. Lift Hold and Approve Linked Invoice(s) for Immediate Finance Payout
+      const noteAppend = ` | [Exception #${resolveTarget.exception_number} Settled by ${actorName} via ${resolutionAction}]: ${
+        resolutionNote.trim() || 'Approved for Payout'
+      }`;
 
       if (resolveTarget.invoice_id) {
         await supabase
           .from('invoices')
           .update({
             match_status: 'MANUAL_OVERRIDE',
-            payment_status: 'PROCESSING',
+            payment_status: 'APPROVED_FOR_PAYMENT',
+            updated_at: new Date().toISOString(),
           })
           .eq('invoice_id', resolveTarget.invoice_id);
       }
 
+      // Also ensure any invoices on hold for this PO are updated
+      if (resolveTarget.po_id) {
+        await supabase
+          .from('invoices')
+          .update({
+            match_status: 'MANUAL_OVERRIDE',
+            payment_status: 'APPROVED_FOR_PAYMENT',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('po_id', resolveTarget.po_id)
+          .in('payment_status', ['ON_HOLD', 'UNPAID']);
+      }
+
+      // 3. Log Audit Trail
+      await logAuditAction('EXCEPTION_RESOLVED_BY_PR', 'exceptions', resolveTarget.exception_id, {
+        exception_number: resolveTarget.exception_number,
+        resolution_action: resolutionAction,
+        resolution_note: resolutionNote,
+        resolved_by: actorName,
+      });
+
+      // 4. Send Email Notification to Finance Controller
+      await triggerExceptionResolvedNotification({
+        exceptionId: resolveTarget.exception_number,
+        invoiceId: resolveTarget.invoice_id,
+        invoiceNumber: resolveTarget.invoices?.invoice_number,
+        poNumber: resolveTarget.purchase_orders?.po_number,
+        supplierName: resolveTarget.purchase_orders?.suppliers?.supplier_name,
+        resolutionAction: resolutionAction,
+        resolutionNote: resolutionNote,
+        resolvedBy: actorName,
+        amount: Number(resolveTarget.difference || 0),
+      });
+
+      // 5. Global Alert & Notification
       addAlert({
-        title: `Exception Resolved: ${resolveTarget.exception_number}`,
-        message: `Resolution via ${resolutionAction} completed. Payment hold lifted for invoice.`,
+        title: `Exception Settled: ${resolveTarget.exception_number}`,
+        message: `Discrepancy resolved via ${resolutionAction} by ${actorName}. Invoice released for Finance payout settlement.`,
         severity: 'success',
         link: '/payments',
       });
 
-      showSnackbar(`Exception #${resolveTarget.exception_number} resolved successfully!`, 'success');
+      showSnackbar(
+        `Exception #${resolveTarget.exception_number} successfully settled! Invoice released to Finance for payout.`,
+        'success'
+      );
+
       setResolveTarget(null);
       setResolutionNote('');
+      fetchExceptions();
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
+    } finally {
+      setIsSubmittingResolution(false);
     }
   };
 

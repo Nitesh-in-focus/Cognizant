@@ -65,6 +65,29 @@ export const YardManagement: React.FC = () => {
 
   useEffect(() => {
     fetchYardData();
+
+    const channel = supabase
+      .channel('yard_management_live_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yard_entries' },
+        () => fetchYardData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shipments' },
+        () => fetchYardData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'docks' },
+        () => fetchYardData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [refreshKey]);
 
   const fetchYardData = async () => {
@@ -139,33 +162,63 @@ export const YardManagement: React.FC = () => {
       const derivedSupplierId = selectedShipment?.supplier_id ||
         selectedShipment?.purchase_orders?.supplier_id || null;
 
-      const { error } = await supabase.from('yard_entries').insert([
-        {
-          truck_id: checkInState.truck_id,
-          yard_id: checkInState.yard_id,
-          shipment_id: checkInState.shipment_id || null,
-          po_id: derivedPoId,
-          supplier_id: derivedSupplierId,
-          entry_time: new Date().toISOString(),
-          gate_in_time: new Date().toISOString(),
-          status: 'WAITING',
-          gate_verified: true,
-          waiting_minutes: 0,
-          notes: checkInState.notes || null,
-        },
-      ]);
+      const nowIso = new Date().toISOString();
 
-      if (error) throw error;
+      // Check if an existing yard entry was created when the driver arrived
+      let existingEntryId: string | null = null;
+      if (checkInState.shipment_id) {
+        const { data: existing } = await supabase
+          .from('yard_entries')
+          .select('yard_entry_id')
+          .eq('shipment_id', checkInState.shipment_id)
+          .maybeSingle();
+        existingEntryId = existing?.yard_entry_id || null;
+      }
+
+      if (existingEntryId) {
+        const { error } = await supabase
+          .from('yard_entries')
+          .update({
+            truck_id: checkInState.truck_id,
+            yard_id: checkInState.yard_id,
+            po_id: derivedPoId,
+            supplier_id: derivedSupplierId,
+            gate_in_time: nowIso,
+            status: 'WAITING',
+            gate_verified: true,
+            waiting_minutes: 0,
+            notes: checkInState.notes || 'Security check-in completed at gate.',
+          })
+          .eq('yard_entry_id', existingEntryId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('yard_entries').insert([
+          {
+            truck_id: checkInState.truck_id,
+            yard_id: checkInState.yard_id,
+            shipment_id: checkInState.shipment_id || null,
+            po_id: derivedPoId,
+            supplier_id: derivedSupplierId,
+            entry_time: nowIso,
+            gate_in_time: nowIso,
+            status: 'WAITING',
+            gate_verified: true,
+            waiting_minutes: 0,
+            notes: checkInState.notes || 'Security check-in completed at gate.',
+          },
+        ]);
+        if (error) throw error;
+      }
 
       await supabase
         .from('trucks')
-        .update({ status: 'IN_YARD' })
+        .update({ status: 'IN_YARD', last_location_update: nowIso })
         .eq('truck_id', checkInState.truck_id);
 
       if (checkInState.shipment_id) {
         await supabase
           .from('shipments')
-          .update({ status: 'AT_GATE' })
+          .update({ status: 'AT_GATE', updated_at: nowIso })
           .eq('shipment_id', checkInState.shipment_id);
       }
 
@@ -178,6 +231,7 @@ export const YardManagement: React.FC = () => {
       showSnackbar('Gate verified: Truck + Shipment + PO linked. Added to yard queue.', 'success');
       setOpenCheckIn(false);
       setCheckInState({ truck_id: '', yard_id: yards[0]?.yard_id || '', shipment_id: '', notes: '' });
+      fetchYardData();
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
@@ -373,6 +427,13 @@ export const YardManagement: React.FC = () => {
             updated_at: new Date().toISOString(),
           })
           .eq('shipment_id', entry.shipment_id);
+      }
+
+      if (entry.truck_id) {
+        await supabase
+          .from('trucks')
+          .update({ status: 'AVAILABLE' })
+          .eq('truck_id', entry.truck_id);
       }
 
       showSnackbar('Unloading completed! Dock bay released and shipment queued for QC & GRN generation.', 'success');
@@ -826,7 +887,23 @@ export const YardManagement: React.FC = () => {
                         <StatusBadge status={entry.status || 'WAITING'} size="sm" />
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        {entry.status === 'WAITING' ? (
+                        {entry.status === 'ARRIVED' ? (
+                          <button
+                            onClick={() => {
+                              setCheckInState({
+                                truck_id: entry.truck_id,
+                                yard_id: entry.yard_id || yards[0]?.yard_id || '',
+                                shipment_id: entry.shipment_id || '',
+                                notes: 'Checked in from Arrival queue',
+                              });
+                              setOpenCheckIn(true);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs transition-all shadow-xs flex items-center gap-1.5 ml-auto animate-pulse"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Gate Check-In</span>
+                          </button>
+                        ) : entry.status === 'WAITING' ? (
                           <button
                             onClick={() => { setAssignDialog({ open: true, entry }); if (docks.length) setSelectedDockId(docks[0].dock_id); }}
                             className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-xs"
@@ -901,6 +978,7 @@ export const YardManagement: React.FC = () => {
             >
               <option value="">— Select Truck —</option>
               {trucks
+                .filter(t => t.status !== 'IN_YARD' && t.status !== 'AT_DOCK')
                 .filter(t => !shipmentSearch ||
                   t.vehicle_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
                   t.driver_name?.toLowerCase().includes(shipmentSearch.toLowerCase())
@@ -930,6 +1008,12 @@ export const YardManagement: React.FC = () => {
             >
               <option value="">— Direct Gate Verification (No Shipment) —</option>
               {shipments
+                .filter(s => 
+                  s.status !== 'UNLOADED' && 
+                  s.status !== 'COMPLETED' && 
+                  s.status !== 'DEPARTED' && 
+                  s.status !== 'CANCELLED'
+                )
                 .filter(s => !shipmentSearch ||
                   s.shipment_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
                   s.purchase_orders?.po_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
@@ -937,7 +1021,7 @@ export const YardManagement: React.FC = () => {
                 )
                 .map((s) => (
                   <option key={s.shipment_id} value={s.shipment_id}>
-                    Shipment: {s.shipment_number} | PO: {s.purchase_orders?.po_number || 'N/A'} — {s.purchase_orders?.suppliers?.supplier_name || 'Vendor'} ({s.status})
+                    {s.status === 'ARRIVED' ? '🟢 [ARRIVED AT GATE] ' : ''}Shipment: {s.shipment_number} | PO: {s.purchase_orders?.po_number || s.po_id || 'N/A'} — {s.purchase_orders?.suppliers?.supplier_name || 'Vendor'} ({s.status})
                   </option>
               ))}
             </select>

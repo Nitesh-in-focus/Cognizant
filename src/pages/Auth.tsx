@@ -87,6 +87,37 @@ export const Auth: React.FC = () => {
     setSuccessMessage('');
     setLoading(true);
 
+    const getTargetRoute = (targetRole: string) => {
+      switch (targetRole) {
+        case 'PROCUREMENT_OFFICER':
+        case 'PROCUREMENT_MANAGER':
+        case 'ADMIN':
+        case 'SYSTEM_ADMIN':
+          return '/procurement/dashboard';
+        case 'FINANCE':
+        case 'FINANCE_MANAGER':
+          return '/finance/dashboard';
+        case 'WORKER':
+          return '/worker/dashboard';
+        case 'SUPPLIER':
+          return '/supplier/dashboard';
+        case 'LOGISTICS_GATE_POST':
+        case 'GATE_POST_OFFICER':
+        case 'GATE_OPERATOR':
+        case 'LOGISTICS':
+          return '/logistics/dashboard';
+        case 'RECEIVING_QC':
+        case 'RECEIVING_QC_OPERATOR':
+        case 'RECEIVING_OPERATOR':
+          return '/receiving/dashboard';
+        case 'TRUCK_DRIVER':
+        case 'DRIVER':
+          return '/driver/dashboard';
+        default:
+          return '/';
+      }
+    };
+
     try {
       if (isSignUp) {
         if (!fullName.trim() || !email.trim() || !password.trim()) {
@@ -132,7 +163,7 @@ export const Auth: React.FC = () => {
         if (res.success) {
           setSuccessMessage('Account created successfully! Signing in...');
           setTimeout(() => {
-            navigate('/');
+            navigate(getTargetRoute(role));
           }, 800);
         } else {
           setErrorMessage(res.error || 'Failed to create account.');
@@ -146,7 +177,9 @@ export const Auth: React.FC = () => {
 
         const res = await login(email.trim().toLowerCase(), password);
         if (res.success) {
-          navigate('/');
+          const savedUser = JSON.parse(localStorage.getItem('c2_current_user') || '{}');
+          const activeRole = savedUser?.role || 'PROCUREMENT_OFFICER';
+          navigate(getTargetRoute(activeRole));
         } else {
           setErrorMessage(res.error || 'Invalid email or password.');
         }

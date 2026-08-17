@@ -35,6 +35,7 @@ import PoActionLandingPage from './pages/PoActionLandingPage';
 export const App: React.FC = () => {
   const location = useLocation();
   const { currentUser, role } = useApp();
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [openScenarioRunner, setOpenScenarioRunner] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
   const [openGuide, setOpenGuide] = useState(() => {
@@ -77,7 +78,10 @@ export const App: React.FC = () => {
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
       {/* 240px Deep Navy Grouped Sidebar */}
-      <AppSidebar />
+      <AppSidebar
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+      />
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -86,13 +90,22 @@ export const App: React.FC = () => {
           onOpenScenarioRunner={() => setOpenScenarioRunner(true)}
           onOpenSearch={() => setOpenSearch(true)}
           onOpenGuide={() => setOpenGuide(true)}
+          onToggleMobileSidebar={() => setMobileSidebarOpen((prev) => !prev)}
         />
 
         {/* Scrollable Work Area */}
-        <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto overflow-x-hidden">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 max-w-7xl w-full mx-auto overflow-x-hidden">
           <Routes>
             <Route path="/" element={<Dashboard onOpenGuide={() => setOpenGuide(true)} />} />
             <Route path="/login" element={<Navigate to="/" replace />} />
+
+            {/* Direct Role Intelligence Dashboards (Spec Section 3) */}
+            <Route path="/procurement/dashboard" element={<Dashboard defaultRoleView="PROCUREMENT_OFFICER" />} />
+            <Route path="/finance/dashboard" element={<Dashboard defaultRoleView="FINANCE" />} />
+            <Route path="/worker/dashboard" element={<Dashboard defaultRoleView="WORKER" />} />
+            <Route path="/supplier/dashboard" element={<Dashboard defaultRoleView="SUPPLIER" />} />
+            <Route path="/logistics/dashboard" element={<Dashboard defaultRoleView="LOGISTICS_GATE_POST" />} />
+            <Route path="/receiving/dashboard" element={<Dashboard defaultRoleView="RECEIVING_QC" />} />
 
             {/* Worker Routes */}
             <Route path="/worker/pr" element={<PurchaseRequisitions />} />

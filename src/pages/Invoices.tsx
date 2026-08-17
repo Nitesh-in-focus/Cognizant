@@ -17,36 +17,57 @@ import {
   HelpCircle,
   Clock,
   Sparkles,
+  Zap,
+  CheckCheck,
+  DollarSign,
+  AlertOctagon,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { triggerFinanceExceptionNotification } from '../services/emailService';
+import {
+  executeThreeWayMatchAndSync,
+  executeInvoicePayout,
+  ThreeWayMatchResult,
+} from '../services/matchingService';
 
 export const Invoices: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canApproveInvoice, canReleasePayment, logAuditAction } = useApp();
+  const {
+    refreshKey,
+    triggerRefresh,
+    showSnackbar,
+    addAlert,
+    canApproveInvoice,
+    canReleasePayment,
+    logAuditAction,
+    currentUser,
+    role,
+  } = useApp();
 
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [paymentFilter, setPaymentFilter] = useState('ALL');
+  const [batchMatching, setBatchMatching] = useState(false);
 
   // 3-Way Match Modal state
   const [openMatchModal, setOpenMatchModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
-  const [matchingData, setMatchingData] = useState<{
-    po: any | null;
-    grn: any | null;
-    shipment: any | null;
-  }>({ po: null, grn: null, shipment: null });
+  const [matchResult, setMatchResult] = useState<ThreeWayMatchResult | null>(null);
   const [loadingMatchData, setLoadingMatchData] = useState(false);
-  const [resolvingException, setResolvingException] = useState(false);
+  const [payoutProcessing, setPayoutProcessing] = useState(false);
+  const [payoutPaymentMethod, setPayoutPaymentMethod] = useState('NEFT');
+  const [payoutCompletedTxRef, setPayoutCompletedTxRef] = useState<string | null>(null);
+
+  // Resolution / Escalation inputs
   const [overrideNotes, setOverrideNotes] = useState('');
   const [escalationReason, setEscalationReason] = useState('');
   const [showOverrideInput, setShowOverrideInput] = useState(false);
   const [showEscalateInput, setShowEscalateInput] = useState(false);
+  const [isSubmittingAction, setIsSubmittingAction] = useState(false);
 
   useEffect(() => {
     fetchInvoices();
@@ -69,7 +90,7 @@ export const Invoices: React.FC = () => {
             po_items(*, products(*))
           ),
           suppliers(supplier_id, supplier_name, supplier_code, city, email),
-          shipments(shipment_id, shipment_number, total_quantity, status)
+          shipments(shipment_id, shipment_number, total_quantity, status, po_id)
         `)
         .order('created_at', { ascending: false });
 
@@ -83,155 +104,133 @@ export const Invoices: React.FC = () => {
     }
   };
 
-  // Open 3-Way Match Review Modal for a specific invoice
+  // Open & Execute 3-Way Match Review Modal for a specific invoice
   const handleOpen3WayMatch = async (inv: any) => {
     setSelectedInvoice(inv);
     setShowOverrideInput(false);
     setShowEscalateInput(false);
     setOverrideNotes('');
     setEscalationReason('');
+    setPayoutCompletedTxRef(null);
     setOpenMatchModal(true);
     setLoadingMatchData(true);
 
     try {
-      // 1. Fetch linked PO with items
-      const poPromise = inv.po_id
-        ? supabase
-            .from('purchase_orders')
-            .select('*, suppliers(*), warehouses(*), po_items(*, products(*))')
-            .eq('po_id', inv.po_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null });
-
-      // 2. Fetch linked GRN for this PO
-      const grnPromise = inv.po_id
-        ? supabase
-            .from('goods_receipts')
-            .select('*, grn_items(*, products(*))')
-            .eq('po_id', inv.po_id)
-            .order('received_date', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null });
-
-      // 3. Fetch linked shipment if applicable
-      const shpPromise = inv.shipment_id
-        ? supabase.from('shipments').select('*').eq('shipment_id', inv.shipment_id).maybeSingle()
-        : Promise.resolve({ data: null, error: null });
-
-      const [poRes, grnRes, shpRes] = await Promise.all([poPromise, grnPromise, shpPromise]);
-
-      setMatchingData({
-        po: poRes.data,
-        grn: grnRes.data,
-        shipment: shpRes.data,
+      // Execute 3-Way Match engine: autofetches PO + GRN + Invoice, evaluates variance, syncs database & exceptions
+      const result = await executeThreeWayMatchAndSync(inv, {
+        userName: currentUser?.full_name,
+        userRole: role,
       });
+
+      setMatchResult(result);
+      setSelectedInvoice(result.invoice);
+
+      if (result.isFullyMatched) {
+        showSnackbar(`3-Way Match PASSED for ${inv.invoice_number}! PO, GRN & Invoice 100% aligned.`, 'success');
+      } else {
+        showSnackbar(`3-Way Match Discrepancy on ${inv.invoice_number}: ${result.mismatchDetails}`, 'warning');
+      }
+
+      // Re-fetch inbox so table reflects updated match_status / payment_status
+      fetchInvoices();
     } catch (err: any) {
-      console.error('Error fetching 3-way match data:', err);
+      console.error('Error executing 3-way match:', err);
       showSnackbar('Error loading matching records: ' + err.message, 'error');
     } finally {
       setLoadingMatchData(false);
     }
   };
 
-  // Calculate 3-Way Match details
-  const getMatchComparison = () => {
-    if (!selectedInvoice) return null;
-    const po = matchingData.po || selectedInvoice.purchase_orders;
-    const grn = matchingData.grn;
-    const firstPoItem = po?.po_items?.[0];
-    const firstGrnItem = grn?.grn_items?.[0];
+  // Run Batch 3-Way Matching for all pending/unmatched invoices
+  const handleRunAll3WayMatches = async () => {
+    try {
+      setBatchMatching(true);
+      const pendingInvoices = invoices.filter((i) => i.payment_status !== 'PAID');
+      if (pendingInvoices.length === 0) {
+        showSnackbar('All invoices in queue are already processed and paid.', 'info');
+        return;
+      }
 
-    const poQty = Number(firstPoItem?.ordered_quantity || po?.total_quantity || 100);
-    const poUnitPrice = Number(firstPoItem?.unit_price || (po ? Math.round(Number(po.total_amount) / 1.18 / poQty) : 250));
-    const poContractTotal = Number(po?.total_amount || 0);
+      let matchedCount = 0;
+      let mismatchCount = 0;
 
-    const grnReceivedQty = grn ? Number(firstGrnItem?.received_quantity ?? grn.received_quantity ?? poQty) : poQty;
-    const grnAcceptedQty = grn ? Number(firstGrnItem?.accepted_quantity ?? grn.accepted_quantity ?? grnReceivedQty) : poQty;
-    const grnDamagedQty = grn ? Number(firstGrnItem?.damaged_quantity ?? 0) : 0;
+      for (const inv of pendingInvoices) {
+        try {
+          const res = await executeThreeWayMatchAndSync(inv, {
+            userName: currentUser?.full_name,
+            userRole: role,
+          });
+          if (res.isFullyMatched) matchedCount++;
+          else mismatchCount++;
+        } catch (e) {
+          console.error('Error matching invoice ' + inv.invoice_number, e);
+        }
+      }
 
-    const invTotal = Number(selectedInvoice.total_amount || 0);
-    const invQty = Number(selectedInvoice.invoiced_quantity || grnAcceptedQty || poQty);
-    const invUnitPrice = Number(selectedInvoice.unit_price || (invQty > 0 ? Math.round(invTotal / 1.18 / invQty) : poUnitPrice));
-
-    // Expected Payable = grnAcceptedQty * poUnitPrice * 1.18 (tax)
-    const expectedPayable = Math.round(grnAcceptedQty * poUnitPrice * 1.18);
-    const priceVariance = invUnitPrice - poUnitPrice;
-    const qtyVariance = invQty - grnAcceptedQty;
-    const totalDiff = invTotal - expectedPayable;
-
-    const isPriceMatched = Math.abs(priceVariance) <= 0.5;
-    const isQtyMatched = qtyVariance <= 0; // Invoiced quantity cannot exceed accepted dock quantity
-    const isTotalMatched = Math.abs(totalDiff) <= 5.0;
-
-    const isFullyMatched = isPriceMatched && isQtyMatched && isTotalMatched;
-
-    return {
-      poNumber: po?.po_number || 'PO-2026-X',
-      poQty,
-      poUnitPrice,
-      poContractTotal,
-      grnNumber: grn?.grn_number || 'GRN-2026-X (Pending)',
-      grnReceivedQty,
-      grnAcceptedQty,
-      grnDamagedQty,
-      invNumber: selectedInvoice.invoice_number,
-      invQty,
-      invUnitPrice,
-      invTotal,
-      expectedPayable,
-      priceVariance,
-      qtyVariance,
-      totalDiff,
-      isPriceMatched,
-      isQtyMatched,
-      isTotalMatched,
-      isFullyMatched,
-    };
+      showSnackbar(
+        `Batch 3-Way Match Completed: ${matchedCount} matched & approved, ${mismatchCount} exceptions flagged.`,
+        matchedCount > 0 ? 'success' : 'warning'
+      );
+      fetchInvoices();
+      triggerRefresh();
+    } catch (err: any) {
+      showSnackbar('Batch match error: ' + err.message, 'error');
+    } finally {
+      setBatchMatching(false);
+    }
   };
 
-  // Action 1: Approve for Payment (3-Way Match Passed)
-  const handleApprovePayment = async () => {
-    if (!canApproveInvoice()) {
-      showSnackbar('Permission Denied: Only Financial Controllers can approve invoices for payment.', 'error');
+  // Action: Execute Immediate Payout / Banking Settlement
+  const handleExecutePayoutDirect = async () => {
+    if (!canReleasePayment()) {
+      showSnackbar('Permission Denied: Only Financial Controllers can disburse payments.', 'error');
       return;
     }
     if (!selectedInvoice) return;
 
     try {
-      const { error } = await supabase
-        .from('invoices')
-        .update({
-          match_status: 'MATCHED',
-          payment_status: 'APPROVED_FOR_PAYMENT',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('invoice_id', selectedInvoice.invoice_id);
+      setPayoutProcessing(true);
+      const res = await executeInvoicePayout({
+        invoice: selectedInvoice,
+        paymentMethod: payoutPaymentMethod,
+        userName: currentUser?.full_name,
+      });
 
-      if (error) throw error;
+      setPayoutCompletedTxRef(res.transactionReference);
 
-      await logAuditAction('THREE_WAY_MATCH_APPROVED', 'invoices', selectedInvoice.invoice_id, {
-        invoice_number: selectedInvoice.invoice_number,
-        total_amount: selectedInvoice.total_amount,
+      await logAuditAction('PAYMENT_DISBURSED', 'payments', selectedInvoice.invoice_id, {
+        transaction_reference: res.transactionReference,
+        amount: selectedInvoice.total_amount,
+        payment_method: payoutPaymentMethod,
       });
 
       addAlert({
-        title: `3-Way Match Approved: ${selectedInvoice.invoice_number}`,
-        message: `Invoice #${selectedInvoice.invoice_number} approved for payment disbursement (₹${Number(selectedInvoice.total_amount).toLocaleString()}).`,
+        title: `Payment Disbursed: ${res.transactionReference}`,
+        message: `₹${Number(selectedInvoice.total_amount).toLocaleString()} disbursed to ${
+          selectedInvoice.suppliers?.supplier_name || 'Vendor'
+        } via ${payoutPaymentMethod}.`,
         severity: 'success',
         link: '/payments',
       });
 
-      showSnackbar(`Invoice #${selectedInvoice.invoice_number} successfully matched & approved for payment!`, 'success');
-      setOpenMatchModal(false);
+      showSnackbar(
+        `Payout of ₹${Number(selectedInvoice.total_amount).toLocaleString()} successfully settled (Txn: ${
+          res.transactionReference
+        })!`,
+        'success'
+      );
+
       fetchInvoices();
       triggerRefresh();
     } catch (err: any) {
-      showSnackbar('Approval failed: ' + err.message, 'error');
+      console.error('Payout failed:', err);
+      showSnackbar('Payout execution failed: ' + err.message, 'error');
+    } finally {
+      setPayoutProcessing(false);
     }
   };
 
-  // Action 2: Finance Override / Resolve Exception
+  // Action: Finance Override / Resolve Exception
   const handleResolveException = async () => {
     if (!canApproveInvoice()) {
       showSnackbar('Permission Denied: Only Financial Controllers can override exceptions.', 'error');
@@ -243,35 +242,67 @@ export const Invoices: React.FC = () => {
     }
 
     try {
+      setIsSubmittingAction(true);
       const { error } = await supabase
         .from('invoices')
         .update({
           match_status: 'MANUAL_OVERRIDE',
           payment_status: 'APPROVED_FOR_PAYMENT',
           notes: selectedInvoice.notes
-            ? `${selectedInvoice.notes} | [Finance Resolution]: ${overrideNotes}`
-            : `[Finance Resolution]: ${overrideNotes}`,
+            ? `${selectedInvoice.notes} | [Finance Override]: ${overrideNotes}`
+            : `[Finance Override]: ${overrideNotes}`,
           updated_at: new Date().toISOString(),
         })
         .eq('invoice_id', selectedInvoice.invoice_id);
 
       if (error) throw error;
 
+      // Also resolve any open exception record
+      if (matchResult?.existingException?.exception_id) {
+        await supabase
+          .from('exceptions')
+          .update({
+            status: 'RESOLVED',
+            resolved_at: new Date().toISOString(),
+            description: `${matchResult.existingException.description} [Finance Override: ${overrideNotes}]`,
+          })
+          .eq('exception_id', matchResult.existingException.exception_id);
+      }
+
       await logAuditAction('INVOICE_EXCEPTION_RESOLVED', 'invoices', selectedInvoice.invoice_id, {
         notes: overrideNotes,
         invoice_number: selectedInvoice.invoice_number,
       });
 
-      showSnackbar(`Exception resolved for Invoice #${selectedInvoice.invoice_number}. Ready for payment.`, 'success');
-      setOpenMatchModal(false);
+      showSnackbar(
+        `Exception overridden & approved for Invoice #${selectedInvoice.invoice_number}. Ready for immediate payout.`,
+        'success'
+      );
+
+      setShowOverrideInput(false);
       fetchInvoices();
       triggerRefresh();
+
+      // Refresh modal state
+      if (matchResult) {
+        setMatchResult({
+          ...matchResult,
+          isFullyMatched: true,
+          invoice: {
+            ...matchResult.invoice,
+            match_status: 'MANUAL_OVERRIDE',
+            payment_status: 'APPROVED_FOR_PAYMENT',
+          },
+        });
+      }
     } catch (err: any) {
       showSnackbar('Resolution failed: ' + err.message, 'error');
+    } finally {
+      setIsSubmittingAction(false);
     }
   };
 
-  // Action 3: Escalate to PR Officer
+  // Action: Escalate to PR Officer
   const handleEscalateToPrOfficer = async () => {
     if (!escalationReason.trim()) {
       showSnackbar('Please specify the escalation reason for the PR Officer.', 'error');
@@ -279,16 +310,19 @@ export const Invoices: React.FC = () => {
     }
 
     try {
-      const diff = selectedInvoice.total_amount - (matchingData.po?.total_amount || selectedInvoice.total_amount);
-      const excNumber = `EXC-FIN-${Math.floor(1000 + Math.random() * 9000)}`;
+      setIsSubmittingAction(true);
+      const diff = Math.abs(matchResult?.totalDiff || matchResult?.priceVariance || 0);
+      const excNumber = `EXC-ESC-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const isValidUuid = (val?: string) => Boolean(val && val.length === 36 && val.includes('-'));
       const validPoId = isValidUuid(selectedInvoice.po_id) ? selectedInvoice.po_id : null;
       const validInvoiceId = isValidUuid(selectedInvoice.invoice_id) ? selectedInvoice.invoice_id : null;
       const validShipmentId = isValidUuid(selectedInvoice.shipment_id)
         ? selectedInvoice.shipment_id
-        : (isValidUuid(matchingData.shipment?.shipment_id) ? matchingData.shipment.shipment_id : null);
-      const validGrnId = isValidUuid(matchingData.grn?.grn_id) ? matchingData.grn.grn_id : null;
+        : isValidUuid(matchResult?.shipment?.shipment_id)
+        ? matchResult?.shipment.shipment_id
+        : null;
+      const validGrnId = isValidUuid(matchResult?.grn?.grn_id) ? matchResult?.grn.grn_id : null;
 
       // 1. Create exception record in database
       const { error: excErr } = await supabase.from('exceptions').insert([
@@ -298,8 +332,8 @@ export const Invoices: React.FC = () => {
           invoice_id: validInvoiceId,
           grn_id: validGrnId,
           shipment_id: validShipmentId,
-          exception_type: 'PRICE_MISMATCH',
-          expected_value: matchingData.po?.total_amount || 0,
+          exception_type: matchResult?.discrepancyType || 'PRICE_MISMATCH',
+          expected_value: matchResult?.expectedPayable || matchResult?.poContractTotal || 0,
           actual_value: selectedInvoice.total_amount,
           difference: diff,
           severity: 'HIGH',
@@ -328,19 +362,19 @@ export const Invoices: React.FC = () => {
         exception_number: excNumber,
       });
 
-      // Dispatch EmailJS Notification to PR Officer (Updates 12 Section 4)
+      // 3. Dispatch Email Notification to PR Officer
       await triggerFinanceExceptionNotification({
         exceptionId: excNumber,
         invoiceId: selectedInvoice.invoice_id,
         invoiceNumber: selectedInvoice.invoice_number,
         poId: selectedInvoice.po_id,
-        poNumber: matchingData.po?.po_number || selectedInvoice.purchase_orders?.po_number,
+        poNumber: matchResult?.poNumber || selectedInvoice.purchase_orders?.po_number,
         shipmentId: selectedInvoice.shipment_id,
-        shipmentNumber: matchingData.shipment?.shipment_number || selectedInvoice.shipments?.shipment_number,
+        shipmentNumber: matchResult?.shipment?.shipment_number || selectedInvoice.shipments?.shipment_number,
         supplierName: selectedInvoice.suppliers?.supplier_name || 'Vendor Partner',
-        mismatchType: 'PRICE_OR_QUANTITY_MISMATCH',
+        mismatchType: matchResult?.discrepancyType || 'PRICE_OR_QUANTITY_MISMATCH',
         mismatchDetails: escalationReason,
-        amount: Math.abs(diff),
+        amount: diff,
       });
 
       addAlert({
@@ -351,62 +385,14 @@ export const Invoices: React.FC = () => {
       });
 
       showSnackbar(`Discrepancy ticket #${excNumber} created and escalated to PR Officer!`, 'success');
+      setShowEscalateInput(false);
       setOpenMatchModal(false);
       fetchInvoices();
       triggerRefresh();
     } catch (err: any) {
       showSnackbar('Escalation failed: ' + err.message, 'error');
-    }
-  };
-
-  // Action 4: Immediate Settlement Disbursement (if approved)
-  const handleDisbursePayment = async () => {
-    if (!canReleasePayment()) {
-      showSnackbar('Permission Denied: Only Financial Controllers can disburse payments.', 'error');
-      return;
-    }
-    if (!selectedInvoice) return;
-
-    try {
-      const txRef = `NEFT-${Date.now().toString().slice(-8)}`;
-
-      const { error: payErr } = await supabase.from('payments').insert([
-        {
-          invoice_id: selectedInvoice.invoice_id,
-          supplier_id: selectedInvoice.supplier_id,
-          payment_amount: selectedInvoice.total_amount,
-          payment_date: new Date().toISOString(),
-          payment_method: 'NEFT',
-          status: 'COMPLETED',
-          transaction_reference: txRef,
-        },
-      ]);
-
-      if (payErr) throw payErr;
-
-      await supabase
-        .from('invoices')
-        .update({ payment_status: 'PAID', updated_at: new Date().toISOString() })
-        .eq('invoice_id', selectedInvoice.invoice_id);
-
-      await logAuditAction('PAYMENT_DISBURSED', 'payments', selectedInvoice.invoice_id, {
-        transaction_reference: txRef,
-        amount: selectedInvoice.total_amount,
-      });
-
-      addAlert({
-        title: `Payment Disbursed: ${txRef}`,
-        message: `₹${Number(selectedInvoice.total_amount).toLocaleString()} disbursed to ${selectedInvoice.suppliers?.supplier_name}.`,
-        severity: 'success',
-        link: '/payments',
-      });
-
-      showSnackbar(`Payout of ₹${Number(selectedInvoice.total_amount).toLocaleString()} confirmed (Txn: ${txRef})!`, 'success');
-      setOpenMatchModal(false);
-      fetchInvoices();
-      triggerRefresh();
-    } catch (err: any) {
-      showSnackbar(err.message, 'error');
+    } finally {
+      setIsSubmittingAction(false);
     }
   };
 
@@ -424,27 +410,40 @@ export const Invoices: React.FC = () => {
   });
 
   const totalInvoices = invoices.length;
-  const pendingMatchCount = invoices.filter((i) => i.match_status === 'PENDING').length;
-  const approvedCount = invoices.filter((i) => i.payment_status === 'APPROVED_FOR_PAYMENT').length;
+  const pendingMatchCount = invoices.filter((i) => i.match_status === 'PENDING' || !i.match_status).length;
+  const approvedCount = invoices.filter(
+    (i) => i.payment_status === 'APPROVED_FOR_PAYMENT' || (i.match_status === 'MATCHED' && i.payment_status !== 'PAID')
+  ).length;
   const onHoldCount = invoices.filter((i) => i.payment_status === 'ON_HOLD' || i.match_status === 'MISMATCH').length;
+  const paidCount = invoices.filter((i) => i.payment_status === 'PAID').length;
 
-  const comp = getMatchComparison();
+  const comp = matchResult;
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header (Updates 11 Section 7 & 12: Finance Invoice Inbox) */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Receipt className="w-5 h-5 text-blue-600" />
-            Finance Invoice Inbox & Accounts Payable Reconciliation
+            Finance Invoice Inbox & Automated 3-Way Matching
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Received supplier billing manifests, automated 3-way matching (PO ↔ GRN ↔ Invoice), and disbursement approvals.
+            Automated 3-Way Matching (PO ↔ Dock GRN ↔ Supplier Invoice), exception containment, and 1-click banking payouts.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleRunAll3WayMatches}
+            disabled={batchMatching || loading}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+            title="Automatically run 3-way match on all pending invoices"
+          >
+            <Zap className={`w-3.5 h-3.5 ${batchMatching ? 'animate-bounce' : ''}`} />
+            <span>{batchMatching ? 'Running Match Engine...' : 'Run All 3-Way Matches'}</span>
+          </button>
+
           <button
             onClick={() => {
               fetchInvoices();
@@ -463,19 +462,19 @@ export const Invoices: React.FC = () => {
         <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs">
           <span className="text-[10px] text-slate-400 font-bold uppercase block">Received Invoices</span>
           <div className="text-xl font-black text-slate-900 mt-0.5">{totalInvoices}</div>
-          <span className="text-[11px] text-slate-500">Submitted by active suppliers</span>
+          <span className="text-[11px] text-slate-500">{paidCount} settled via banking rail</span>
         </div>
 
         <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs">
           <span className="text-[10px] text-amber-500 font-bold uppercase block">Pending 3-Way Match</span>
           <div className="text-xl font-black text-amber-600 mt-0.5">{pendingMatchCount}</div>
-          <span className="text-[11px] text-slate-500">Awaiting reconciliation</span>
+          <span className="text-[11px] text-slate-500">Awaiting PO ↔ GRN auto-check</span>
         </div>
 
         <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs">
           <span className="text-[10px] text-emerald-500 font-bold uppercase block">Approved for Payout</span>
           <div className="text-xl font-black text-emerald-600 mt-0.5">{approvedCount}</div>
-          <span className="text-[11px] text-slate-500">Ready for banking settlement</span>
+          <span className="text-[11px] text-slate-500">100% matched & ready for payout</span>
         </div>
 
         <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs">
@@ -546,14 +545,15 @@ export const Invoices: React.FC = () => {
                 <th className="py-3 px-4">OCR Status</th>
                 <th className="py-3 px-4">3-Way Match</th>
                 <th className="py-3 px-4">Payment Status</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                <th className="py-3 px-4 text-right">3-Way Match Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
                   <td colSpan={9} className="py-8 text-center text-slate-400">
-                    Loading Invoice Inbox...
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-500" />
+                    Loading Invoice Inbox & Reconciliation Queue...
                   </td>
                 </tr>
               ) : filteredInvoices.length === 0 ? (
@@ -567,58 +567,93 @@ export const Invoices: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map((inv) => (
-                  <tr key={inv.invoice_id} className="hover:bg-slate-50/75 transition-colors">
-                    <td className="py-3.5 px-4 font-bold text-blue-600 font-mono">
-                      {inv.invoice_number}
-                      <div className="text-[10px] text-slate-400 font-sans font-normal">
-                        {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString() : 'N/A'}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="font-semibold text-slate-900">{inv.suppliers?.supplier_name || 'Vendor'}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{inv.suppliers?.supplier_code || inv.supplier_id?.slice(0, 8)}</div>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
-                      {inv.purchase_orders?.po_number || 'N/A'}
-                      <div className="text-[10px] text-slate-400 font-sans font-normal">
-                        Contract: ₹{Number(inv.purchase_orders?.total_amount || 0).toLocaleString()}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-700">
-                      {inv.shipments?.shipment_number || (inv.shipment_id ? `SHP-${inv.shipment_id.slice(0, 6)}` : 'Full Contract')}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-900 font-mono">
-                      ₹{Number(inv.total_amount || 0).toLocaleString()}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded font-semibold border text-[10px] ${
-                          inv.ocr_status === 'COMPLETED'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-slate-100 text-slate-700 border-slate-200'
-                        }`}
-                      >
-                        {inv.ocr_status || 'MANUAL'}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <StatusBadge status={inv.match_status || 'PENDING'} size="sm" />
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <StatusBadge status={inv.payment_status || 'UNPAID'} size="sm" />
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleOpen3WayMatch(inv)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs transition-colors cursor-pointer border border-blue-200 inline-flex items-center gap-1.5"
-                      >
-                        <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                        <span>3-Way Match</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                filteredInvoices.map((inv) => {
+                  const isMatched = inv.match_status === 'MATCHED' || inv.match_status === 'MANUAL_OVERRIDE';
+                  const isPaid = inv.payment_status === 'PAID';
+                  const isHold = inv.payment_status === 'ON_HOLD' || inv.match_status === 'MISMATCH';
+
+                  return (
+                    <tr key={inv.invoice_id} className="hover:bg-slate-50/75 transition-colors">
+                      <td className="py-3.5 px-4 font-bold text-blue-600 font-mono">
+                        {inv.invoice_number}
+                        <div className="text-[10px] text-slate-400 font-sans font-normal">
+                          {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString() : 'N/A'}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-slate-900">{inv.suppliers?.supplier_name || 'Vendor'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {inv.suppliers?.supplier_code || inv.supplier_id?.slice(0, 8)}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
+                        {inv.purchase_orders?.po_number || 'N/A'}
+                        <div className="text-[10px] text-slate-400 font-sans font-normal">
+                          Contract: ₹{Number(inv.purchase_orders?.total_amount || 0).toLocaleString()}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-700">
+                        {inv.shipments?.shipment_number || (inv.shipment_id ? `SHP-${inv.shipment_id.slice(0, 6)}` : 'Full Contract')}
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-slate-900 font-mono">
+                        ₹{Number(inv.total_amount || 0).toLocaleString()}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded font-semibold border text-[10px] ${
+                            inv.ocr_status === 'COMPLETED'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          {inv.ocr_status || 'MANUAL'}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <StatusBadge status={inv.match_status || 'PENDING'} size="sm" />
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <StatusBadge status={inv.payment_status || 'UNPAID'} size="sm" />
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          onClick={() => handleOpen3WayMatch(inv)}
+                          className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer border inline-flex items-center gap-1.5 ${
+                            isPaid
+                              ? 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                              : isMatched
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                              : isHold
+                              ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100'
+                              : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                          }`}
+                        >
+                          {isPaid ? (
+                            <>
+                              <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Settled / Paid</span>
+                            </>
+                          ) : isMatched ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Matched ➔ Payout</span>
+                            </>
+                          ) : isHold ? (
+                            <>
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                              <span>Exception View</span>
+                            </>
+                          ) : (
+                            <>
+                              <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Run 3-Way Match</span>
+                            </>
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -626,46 +661,57 @@ export const Invoices: React.FC = () => {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════ */}
-      {/* 3-Way Match & Reconciliation Modal (Updates 11 Section 14-16)  */}
+      {/* 3-Way Match & Reconciliation Modal                              */}
       {/* ══════════════════════════════════════════════════════════════ */}
       {openMatchModal && selectedInvoice && (
         <Modal
           isOpen={openMatchModal}
           onClose={() => setOpenMatchModal(false)}
           title="Automated 3-Way Match Reconciliation"
-          subtitle={`Reconciling PO ↔ GRN Intake ↔ Supplier Invoice #${selectedInvoice.invoice_number}`}
+          subtitle={`Reconciling PO ↔ Dock GRN Intake ↔ Supplier Invoice #${selectedInvoice.invoice_number}`}
           maxWidth="2xl"
           footer={
-            <div className="flex items-center justify-between w-full">
+            <div className="flex flex-col sm:flex-row items-center justify-between w-full gap-3">
               <button
                 onClick={() => setOpenMatchModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer w-full sm:w-auto"
               >
                 Close
               </button>
 
-              <div className="flex items-center gap-2">
-                {comp?.isFullyMatched && selectedInvoice.payment_status !== 'PAID' && selectedInvoice.payment_status !== 'APPROVED_FOR_PAYMENT' && (
-                  <button
-                    onClick={handleApprovePayment}
-                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Approve for Payment</span>
-                  </button>
+              <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
+                {/* 1-Click Payout (when Matched or Approved and not yet paid) */}
+                {comp?.isFullyMatched && selectedInvoice.payment_status !== 'PAID' && !payoutCompletedTxRef && (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={payoutPaymentMethod}
+                      onChange={(e) => setPayoutPaymentMethod(e.target.value)}
+                      className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800"
+                    >
+                      <option value="NEFT">NEFT (Direct Bank)</option>
+                      <option value="RTGS">RTGS (High Value)</option>
+                      <option value="IMPS">IMPS (Instant)</option>
+                      <option value="ACH">ACH Direct</option>
+                      <option value="WIRE">Intl Wire</option>
+                    </select>
+
+                    <button
+                      onClick={handleExecutePayoutDirect}
+                      disabled={payoutProcessing}
+                      className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      <span>
+                        {payoutProcessing
+                          ? 'Settling Banking Rail...'
+                          : `Execute ${payoutPaymentMethod} Payout (₹${Number(selectedInvoice.total_amount).toLocaleString()})`}
+                      </span>
+                    </button>
+                  </div>
                 )}
 
-                {selectedInvoice.payment_status === 'APPROVED_FOR_PAYMENT' && (
-                  <button
-                    onClick={handleDisbursePayment}
-                    className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <CreditCard className="w-4 h-4" />
-                    <span>Execute NEFT Settlement (₹{Number(selectedInvoice.total_amount).toLocaleString()})</span>
-                  </button>
-                )}
-
-                {!comp?.isFullyMatched && selectedInvoice.payment_status !== 'PAID' && (
+                {/* If Discrepancy / Unmatched */}
+                {!comp?.isFullyMatched && selectedInvoice.payment_status !== 'PAID' && !payoutCompletedTxRef && (
                   <>
                     <button
                       onClick={() => {
@@ -690,6 +736,14 @@ export const Invoices: React.FC = () => {
                     </button>
                   </>
                 )}
+
+                {/* If already Paid */}
+                {(selectedInvoice.payment_status === 'PAID' || payoutCompletedTxRef) && (
+                  <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-bold flex items-center gap-1.5">
+                    <CheckCheck className="w-4 h-4 text-emerald-600" />
+                    <span>Settled & Paid</span>
+                  </div>
+                )}
               </div>
             </div>
           }
@@ -697,9 +751,25 @@ export const Invoices: React.FC = () => {
           <div className="space-y-4 text-xs">
             {/* Loading Indicator */}
             {loadingMatchData && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2 text-blue-700">
+              <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2.5 text-blue-800">
                 <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                <span>Fetching linked Purchase Order items and dock Goods Receipt manifests...</span>
+                <span className="font-semibold">
+                  Autofetching linked PO items, dock GRN intake manifests, and running algorithmic 3-way match...
+                </span>
+              </div>
+            )}
+
+            {/* Payout Success Receipt Banner */}
+            {payoutCompletedTxRef && (
+              <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-950 space-y-1 animate-in fade-in">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-800">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <span>Banking Settlement Disbursed Successfully!</span>
+                </div>
+                <p className="text-xs text-emerald-700">
+                  Transaction Reference: <strong className="font-mono">{payoutCompletedTxRef}</strong> • Amount: ₹
+                  {Number(selectedInvoice.total_amount).toLocaleString()} via {payoutPaymentMethod}.
+                </p>
               </div>
             )}
 
@@ -719,28 +789,29 @@ export const Invoices: React.FC = () => {
                     <AlertTriangle className="w-5 h-5 text-rose-600 mt-0.5 shrink-0" />
                   )}
                   <div>
-                    <h4 className="font-bold text-sm">
-                      {comp.isFullyMatched
-                        ? '3-Way Match Verification PASSED'
-                        : '3-Way Match Discrepancy Detected — Payment on Hold'}
+                    <h4 className="font-bold text-sm flex items-center gap-2">
+                      <span>
+                        {comp.isFullyMatched
+                          ? '3-Way Match Verification PASSED'
+                          : '3-Way Match Discrepancy Detected — Payment on Hold'}
+                      </span>
+                      {comp.discrepancyType && (
+                        <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-mono font-bold">
+                          {comp.discrepancyType}
+                        </span>
+                      )}
                     </h4>
-                    <p className="text-xs opacity-80 mt-0.5">
+                    <p className="text-xs opacity-90 mt-1">
                       {comp.isFullyMatched
-                        ? 'Contract unit price, dock-accepted quantity, and invoiced total are 100% aligned.'
-                        : `Discrepancy found: ${
-                            !comp.isPriceMatched
-                              ? `Rate Variance ₹${comp.priceVariance}/unit. `
-                              : ''
-                          }${
-                            !comp.isQtyMatched
-                              ? `Invoiced volume (${comp.invQty}) exceeds dock-accepted units (${comp.grnAcceptedQty}). `
-                              : ''
-                          }${
-                            !comp.isTotalMatched
-                              ? `Total variance of ₹${comp.totalDiff.toLocaleString()}.`
-                              : ''
-                          }`}
+                        ? 'Purchase Order contract rate, warehouse GRN accepted quantity, and invoiced total are 100% verified.'
+                        : comp.mismatchDetails}
                     </p>
+                    {comp.existingException && (
+                      <div className="mt-2 text-[11px] font-mono font-bold text-rose-700 flex items-center gap-1.5">
+                        <AlertOctagon className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Tracked Exception Ticket: #{comp.existingException.exception_number} ({comp.existingException.status})</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -778,7 +849,11 @@ export const Invoices: React.FC = () => {
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">2. Warehouse Intake (GRN)</span>
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[10px] font-bold">
+                  <span
+                    className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${
+                      comp?.hasGrn ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
                     {comp?.grnNumber}
                   </span>
                 </div>
@@ -789,7 +864,9 @@ export const Invoices: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Damaged / Defect:</span>
-                    <strong className="font-mono text-rose-600">{comp?.grnDamagedQty} Units</strong>
+                    <strong className={`font-mono ${comp?.grnDamagedQty ? 'text-rose-600 font-bold' : 'text-slate-700'}`}>
+                      {comp?.grnDamagedQty} Units
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Net Accepted:</span>
@@ -813,7 +890,9 @@ export const Invoices: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Invoiced Rate:</span>
-                    <strong className="font-mono text-slate-800">₹{comp?.invUnitPrice}/unit</strong>
+                    <strong className={`font-mono ${comp?.priceVariance ? 'text-rose-600 font-bold' : 'text-slate-800'}`}>
+                      ₹{comp?.invUnitPrice}/unit
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Total Billed:</span>
@@ -937,9 +1016,10 @@ export const Invoices: React.FC = () => {
                   </button>
                   <button
                     onClick={handleEscalateToPrOfficer}
-                    className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold shadow-xs cursor-pointer"
+                    disabled={isSubmittingAction}
+                    className="px-3.5 py-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold shadow-xs cursor-pointer disabled:opacity-50"
                   >
-                    Confirm Escalation Ticket
+                    {isSubmittingAction ? 'Escalating...' : 'Confirm Escalation Ticket'}
                   </button>
                 </div>
               </div>
@@ -967,9 +1047,10 @@ export const Invoices: React.FC = () => {
                   </button>
                   <button
                     onClick={handleResolveException}
-                    className="px-3.5 py-1.5 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-xs cursor-pointer"
+                    disabled={isSubmittingAction}
+                    className="px-3.5 py-1.5 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-xs cursor-pointer disabled:opacity-50"
                   >
-                    Approve Exception Override
+                    {isSubmittingAction ? 'Approving Override...' : 'Approve Exception Override & Authorize Payout'}
                   </button>
                 </div>
               </div>

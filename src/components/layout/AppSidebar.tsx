@@ -20,6 +20,7 @@ import {
   LucideIcon,
   LogOut,
   Shield,
+  X,
 } from 'lucide-react';
 import { useApp, UserRole } from '../../contexts/AppContext';
 
@@ -38,7 +39,12 @@ interface NavGroup {
   items: NavItem[];
 }
 
-export const AppSidebar: React.FC = () => {
+interface AppSidebarProps {
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}
+
+export const AppSidebar: React.FC<AppSidebarProps> = ({ mobileOpen, onCloseMobile }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentUser, role, logout, unreadAlertsCount } = useApp();
@@ -48,6 +54,7 @@ export const AppSidebar: React.FC = () => {
         {
           label: 'Supplier Hub',
           items: [
+            { title: 'Dashboard', path: '/', icon: LayoutDashboard },
             { title: 'Supplier Portal', path: '/supplier', icon: Building2, badge: 'PORTAL' },
             {
               title: 'Supplier Alerts',
@@ -64,6 +71,7 @@ export const AppSidebar: React.FC = () => {
         {
           label: 'Driver App Console',
           items: [
+            { title: 'Dashboard', path: '/', icon: LayoutDashboard },
             { title: 'Driver Trip Console', path: '/driver', icon: Truck, badge: 'ACTIVE' },
             {
               title: 'Driver Alerts',
@@ -195,7 +203,7 @@ export const AppSidebar: React.FC = () => {
           label: 'Intelligence & System',
           items: [
             {
-              title: 'Analytics & Power BI',
+              title: 'Procurement Intelligence',
               path: '/analytics',
               icon: BarChart3,
               allowedRoles: ['SYSTEM_ADMIN', 'ADMIN', 'PROCUREMENT_OFFICER', 'PROCUREMENT_MANAGER', 'LOGISTICS_GATE_POST', 'LOGISTICS', 'LOGISTICS_MANAGER', 'FINANCE', 'FINANCE_MANAGER'],
@@ -221,21 +229,33 @@ export const AppSidebar: React.FC = () => {
     }))
     .filter((group) => group.items.length > 0);
 
-  return (
-    <aside className="w-64 shrink-0 bg-[#0F172A] text-slate-300 flex flex-col min-h-screen border-r border-slate-800">
+  const sidebarContent = (
+    <aside className="w-64 shrink-0 bg-[#0F172A] text-slate-300 flex flex-col h-full min-h-screen border-r border-slate-800">
       {/* Brand Header */}
-      <div className="h-14 flex items-center gap-3 px-5 border-b border-slate-800 bg-[#0B1120]">
-        <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-xs">
-          <Layers className="w-4 h-4" />
-        </div>
-        <div>
-          <div className="text-sm font-black tracking-wide text-white leading-none">
-            SUPPLY SYNC
+      <div className="h-14 flex items-center justify-between px-5 border-b border-slate-800 bg-[#0B1120]">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-xs">
+            <Layers className="w-4 h-4" />
           </div>
-          <div className="text-[10px] font-medium text-slate-400 leading-none mt-1">
-            Autonomous Supply Chain
+          <div>
+            <div className="text-sm font-black tracking-wide text-white leading-none">
+              SUPPLY SYNC
+            </div>
+            <div className="text-[10px] font-medium text-slate-400 leading-none mt-1">
+              Autonomous Supply Chain
+            </div>
           </div>
         </div>
+
+        {/* Mobile close button */}
+        {onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Groups */}
@@ -257,6 +277,9 @@ export const AppSidebar: React.FC = () => {
                   <NavLink
                     key={item.path}
                     to={item.path}
+                    onClick={() => {
+                      if (onCloseMobile) onCloseMobile();
+                    }}
                     className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                       isActive
                         ? 'bg-blue-600 text-white shadow-xs font-semibold'
@@ -315,7 +338,7 @@ export const AppSidebar: React.FC = () => {
               logout();
               navigate('/login');
             }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
             title="Sign Out"
           >
             <LogOut className="w-3.5 h-3.5" />
@@ -323,6 +346,28 @@ export const AppSidebar: React.FC = () => {
         </div>
       </div>
     </aside>
+  );
+
+  return (
+    <>
+      {/* Desktop permanent sidebar */}
+      <div className="hidden lg:flex shrink-0">
+        {sidebarContent}
+      </div>
+
+      {/* Mobile / Tablet slide-over drawer with backdrop */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs transition-opacity"
+            onClick={onCloseMobile}
+          />
+          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-[#0F172A] z-10 animate-in slide-in-from-left duration-200">
+            {sidebarContent}
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

@@ -17,6 +17,7 @@ import {
   LogOut,
   Sparkles,
   BookOpen,
+  Menu,
 } from 'lucide-react';
 import { useApp, UserRole } from '../../contexts/AppContext';
 
@@ -24,12 +25,14 @@ interface AppNavbarProps {
   onOpenScenarioRunner: () => void;
   onOpenSearch: () => void;
   onOpenGuide: () => void;
+  onToggleMobileSidebar?: () => void;
 }
 
 export const AppNavbar: React.FC<AppNavbarProps> = ({
   onOpenScenarioRunner,
   onOpenSearch,
   onOpenGuide,
+  onToggleMobileSidebar,
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -84,12 +87,23 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 h-14 bg-white border-b border-slate-200 flex items-center justify-between px-5">
-      {/* Left: Breadcrumbs */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold text-slate-400">Supply Sync</span>
-        <span className="text-xs text-slate-300">/</span>
-        <span className="text-sm font-bold text-slate-900">{breadcrumbName}</span>
+    <header className="sticky top-0 z-30 h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-5">
+      {/* Left: Mobile Menu Toggle & Breadcrumbs */}
+      <div className="flex items-center gap-2.5">
+        {onToggleMobileSidebar && (
+          <button
+            onClick={onToggleMobileSidebar}
+            className="lg:hidden p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            title="Toggle Menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-400 hidden xs:inline">Supply Sync</span>
+          <span className="text-xs text-slate-300 hidden xs:inline">/</span>
+          <span className="text-sm font-bold text-slate-900">{breadcrumbName}</span>
+        </div>
       </div>
 
       {/* Center: Global Command Search Bar */}

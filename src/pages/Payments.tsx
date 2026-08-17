@@ -9,14 +9,24 @@ import {
   Receipt,
   ArrowRight,
   ShieldCheck,
+  CheckCheck,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { executeInvoicePayout } from '../services/matchingService';
 
 export const Payments: React.FC = () => {
-  const { refreshKey, triggerRefresh, showSnackbar, addAlert, canReleasePayment, logAuditAction } = useApp();
+  const {
+    refreshKey,
+    triggerRefresh,
+    showSnackbar,
+    addAlert,
+    canReleasePayment,
+    logAuditAction,
+    currentUser,
+  } = useApp();
 
   const [payments, setPayments] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -27,18 +37,33 @@ export const Payments: React.FC = () => {
   const [openPayModal, setOpenPayModal] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('NEFT');
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+  const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
 
   useEffect(() => {
     fetchPaymentsData();
   }, [refreshKey]);
 
+  useEffect(() => {
+    const filtered = invoices.filter(
+      (i) =>
+        !modalSearchQuery ||
+        i.invoice_number?.toLowerCase().includes(modalSearchQuery.toLowerCase()) ||
+        i.suppliers?.supplier_name?.toLowerCase().includes(modalSearchQuery.toLowerCase())
+    );
+    if (filtered.length > 0) {
+      if (!filtered.some((f) => f.invoice_id === selectedInvoiceId)) {
+        setSelectedInvoiceId(filtered[0].invoice_id);
+      }
+    } else {
+      setSelectedInvoiceId('');
+    }
+  }, [modalSearchQuery, invoices, selectedInvoiceId]);
+
   const fetchPaymentsData = async () => {
     try {
       setLoading(true);
-      const [
-        { data: payData },
-        { data: invData },
-      ] = await Promise.all([
+      const [{ data: payData }, { data: invData }] = await Promise.all([
         supabase
           .from('payments')
           .select(`
@@ -49,8 +74,8 @@ export const Payments: React.FC = () => {
           .order('payment_date', { ascending: false }),
         supabase
           .from('invoices')
-          .select('*, suppliers(supplier_name)')
-          .in('payment_status', ['PROCESSING', 'UNPAID', 'MANUAL_OVERRIDE']),
+          .select('*, suppliers(supplier_name, city)')
+          .in('payment_status', ['APPROVED_FOR_PAYMENT', 'PROCESSING', 'UNPAID', 'MANUAL_OVERRIDE']),
       ]);
 
       setPayments(payData || []);
@@ -59,7 +84,7 @@ export const Payments: React.FC = () => {
         setSelectedInvoiceId(invData[0].invoice_id);
       }
     } catch (err: any) {
-      console.error(err);
+      console.error('Fetch payments error:', err);
     } finally {
       setLoading(false);
     }
@@ -71,49 +96,40 @@ export const Payments: React.FC = () => {
       return;
     }
 
+    const inv = invoices.find((i) => i.invoice_id === selectedInvoiceId);
+    if (!inv) return;
+
     try {
-      const inv = invoices.find((i) => i.invoice_id === selectedInvoiceId);
-      if (!inv) return;
-
-      const txRef = `${paymentMethod}-${Date.now().toString().slice(-8)}`;
-
-      const { error: payErr } = await supabase.from('payments').insert([
-        {
-          invoice_id: inv.invoice_id,
-          supplier_id: inv.supplier_id,
-          payment_amount: inv.total_amount,
-          payment_date: new Date().toISOString(),
-          payment_method: paymentMethod,
-          status: 'COMPLETED',
-          transaction_reference: txRef,
-        },
-      ]);
-
-      if (payErr) throw payErr;
-
-      await supabase
-        .from('invoices')
-        .update({ payment_status: 'PAID' })
-        .eq('invoice_id', inv.invoice_id);
+      setIsSubmittingPayout(true);
+      const res = await executeInvoicePayout({
+        invoice: inv,
+        paymentMethod: paymentMethod,
+        userName: currentUser?.full_name,
+      });
 
       await logAuditAction('PAYMENT_DISBURSED', 'payments', inv.invoice_id, {
-        transaction_reference: txRef,
+        transaction_reference: res.transactionReference,
         amount: inv.total_amount,
         payment_method: paymentMethod,
       });
 
       addAlert({
-        title: `Payment Disbursed: ${txRef}`,
-        message: `₹${Number(inv.total_amount).toLocaleString()} paid to ${inv.suppliers?.supplier_name} via ${paymentMethod}.`,
+        title: `Payment Disbursed: ${res.transactionReference}`,
+        message: `₹${Number(inv.total_amount).toLocaleString()} paid to ${inv.suppliers?.supplier_name || 'Vendor'} via ${paymentMethod}.`,
         severity: 'success',
         link: '/payments',
       });
 
-      showSnackbar(`Payout of ₹${Number(inv.total_amount).toLocaleString()} confirmed (Txn: ${txRef})!`, 'success');
+      showSnackbar(
+        `Payout of ₹${Number(inv.total_amount).toLocaleString()} confirmed (Txn: ${res.transactionReference})!`,
+        'success'
+      );
       setOpenPayModal(false);
       triggerRefresh();
     } catch (err: any) {
       showSnackbar(err.message, 'error');
+    } finally {
+      setIsSubmittingPayout(false);
     }
   };
 
@@ -127,7 +143,7 @@ export const Payments: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header (Section 40) */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
@@ -142,14 +158,14 @@ export const Payments: React.FC = () => {
         <div className="flex items-center gap-2.5">
           <button
             onClick={triggerRefresh}
-            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
+            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
             title="Refresh Settlements"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setOpenPayModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Execute Payout</span>
@@ -174,7 +190,7 @@ export const Payments: React.FC = () => {
         </div>
       </div>
 
-      {/* Settlements Table (Section 24, 25, 40) */}
+      {/* Settlements Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
@@ -192,6 +208,7 @@ export const Payments: React.FC = () => {
               {loading ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-slate-400">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-500" />
                     Loading Settlements...
                   </td>
                 </tr>
@@ -200,7 +217,9 @@ export const Payments: React.FC = () => {
                   <td colSpan={6} className="py-16 text-center text-slate-400">
                     <CreditCard className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-75" />
                     <span className="font-bold text-slate-700 block text-sm">No Payment Disbursements yet</span>
-                    <span className="text-xs text-slate-500 mt-0.5 block">Approved and 3-way matched invoices will appear here for commercial settlement.</span>
+                    <span className="text-xs text-slate-500 mt-0.5 block">
+                      Approved and 3-way matched invoices will appear here for commercial settlement.
+                    </span>
                   </td>
                 </tr>
               ) : (
@@ -215,14 +234,14 @@ export const Payments: React.FC = () => {
                       </div>
                       <div className="text-[11px] text-slate-400">{p.suppliers?.city}</div>
                     </td>
-                    <td className="py-3.5 px-4 font-semibold text-slate-900">
+                    <td className="py-3.5 px-4 font-semibold text-slate-900 font-mono">
                       {p.invoices?.invoice_number || 'INV-2026-001'}
                     </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-900">
+                    <td className="py-3.5 px-4 font-bold text-slate-900 font-mono">
                       ₹{Number(p.payment_amount || 0).toLocaleString()}
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border border-slate-200 text-[10px]">
                         {p.payment_method || 'NEFT'}
                       </span>
                     </td>
@@ -240,24 +259,30 @@ export const Payments: React.FC = () => {
       {/* Execute Payout Modal */}
       <Modal
         isOpen={openPayModal}
-        onClose={() => setOpenPayModal(false)}
+        onClose={() => {
+          setOpenPayModal(false);
+          setModalSearchQuery('');
+        }}
         title="Execute Vendor Payout Disbursement"
         subtitle="Authorize bank gateway transmission for 3-way matched & approved invoices"
         maxWidth="md"
         footer={
           <>
             <button
-              onClick={() => setOpenPayModal(false)}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              onClick={() => {
+                setOpenPayModal(false);
+                setModalSearchQuery('');
+              }}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleExecutePayment}
-              disabled={invoices.length === 0}
-              className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs disabled:opacity-50"
+              disabled={invoices.length === 0 || !selectedInvoiceId || isSubmittingPayout}
+              className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
             >
-              Authorize Payout
+              {isSubmittingPayout ? 'Processing...' : 'Authorize Payout'}
             </button>
           </>
         }
@@ -270,6 +295,20 @@ export const Payments: React.FC = () => {
           ) : (
             <>
               <div>
+                <label className="font-semibold text-slate-700 block mb-1.5 flex items-center gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Filter Invoices by Vendor Name or Invoice #</span>
+                </label>
+                <input
+                  type="text"
+                  value={modalSearchQuery}
+                  onChange={(e) => setModalSearchQuery(e.target.value)}
+                  placeholder="Type vendor or invoice number to filter..."
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-hidden focus:border-blue-500 mb-2"
+                />
+              </div>
+
+              <div>
                 <label className="font-semibold text-slate-700 block mb-1.5">
                   Select Matched Invoice to Settle
                 </label>
@@ -278,12 +317,27 @@ export const Payments: React.FC = () => {
                   onChange={(e) => setSelectedInvoiceId(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
                 >
-                  {invoices.map((i) => (
-                    <option key={i.invoice_id} value={i.invoice_id}>
-                      {i.invoice_number} - {i.suppliers?.supplier_name} (₹{Number(i.total_amount).toLocaleString()})
-                    </option>
-                  ))}
+                  {invoices
+                    .filter(
+                      (i) =>
+                        !modalSearchQuery ||
+                        i.invoice_number?.toLowerCase().includes(modalSearchQuery.toLowerCase()) ||
+                        i.suppliers?.supplier_name?.toLowerCase().includes(modalSearchQuery.toLowerCase())
+                    )
+                    .map((i) => (
+                      <option key={i.invoice_id} value={i.invoice_id}>
+                        {i.invoice_number} - {i.suppliers?.supplier_name} (₹{Number(i.total_amount).toLocaleString()}) [{i.match_status || 'PENDING'}]
+                      </option>
+                    ))}
                 </select>
+                {invoices.filter(
+                  (i) =>
+                    !modalSearchQuery ||
+                    i.invoice_number?.toLowerCase().includes(modalSearchQuery.toLowerCase()) ||
+                    i.suppliers?.supplier_name?.toLowerCase().includes(modalSearchQuery.toLowerCase())
+                ).length === 0 && (
+                  <p className="text-rose-500 font-semibold mt-1">No invoices match the filter criteria.</p>
+                )}
               </div>
 
               <div>
@@ -297,6 +351,7 @@ export const Payments: React.FC = () => {
                 >
                   <option value="NEFT">National Electronic Funds Transfer (NEFT)</option>
                   <option value="RTGS">Real Time Gross Settlement (RTGS)</option>
+                  <option value="IMPS">Immediate Payment Service (IMPS)</option>
                   <option value="ACH">Automated Clearing House (ACH Direct)</option>
                   <option value="WIRE">International Wire Transfer</option>
                 </select>

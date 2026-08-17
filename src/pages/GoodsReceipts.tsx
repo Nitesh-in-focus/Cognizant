@@ -18,6 +18,7 @@ import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { parseNlpGoodsReceipt, NlpGrnExtractedFields } from '../services/ai/grnNlpService';
+import { VoiceInputButton } from '../components/ui/VoiceInputButton';
 
 export const GoodsReceipts: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, canCreateGRN, canFinalizeQC, logAuditAction } = useApp();
@@ -451,20 +452,31 @@ export const GoodsReceipts: React.FC = () => {
           {/* NLP Assistant Mode */}
           {createMode === 'nlp' && (
             <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-3">
-              <div className="flex items-center justify-between">
+              {/* Header row */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <label className="font-bold text-indigo-950 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                   <span>Natural Language Delivery Statement</span>
                 </label>
-                <span className="text-[10px] text-indigo-600 font-semibold">Gemini 2.5 Flash</span>
+                <div className="flex items-center gap-2">
+                  {/* 🎙️ Voice Input Button */}
+                  <VoiceInputButton
+                    onTranscriptChange={(text) => setNlpPrompt(text)}
+                    existingText={nlpPrompt}
+                    label="Speak Report"
+                    lang="en-IN"
+                  />
+                  <span className="text-[10px] text-indigo-600 font-semibold">Gemini 2.5 Flash</span>
+                </div>
               </div>
 
+              {/* Textarea — voice fills this automatically */}
               <textarea
                 rows={3}
                 value={nlpPrompt}
                 onChange={(e) => setNlpPrompt(e.target.value)}
-                placeholder='e.g., "Received 950 units against PO-2026-8001, 20 units damaged in transit with broken seals and 30 units missing from Box 4."'
-                className="w-full p-3 rounded-lg bg-white border border-indigo-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                placeholder='Type or 🎙️ speak: "Received 950 units against PO-2026-8001, 20 units damaged in transit with broken seals and 30 units missing from Box 4."'
+                className="w-full p-3 rounded-lg bg-white border border-indigo-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none"
               />
 
               <div className="flex items-center justify-between gap-2">
@@ -490,20 +502,39 @@ export const GoodsReceipts: React.FC = () => {
                 </button>
               </div>
 
+
               {extractedDraft && (
-                <div className="p-3 rounded-lg bg-white border border-emerald-300 text-[11px] space-y-1 animate-in fade-in">
+                <div className="p-3 rounded-lg bg-white border border-emerald-300 text-[11px] space-y-2 animate-in fade-in">
                   <div className="flex items-center justify-between font-bold text-emerald-800">
                     <span>AI Extracted Parameters ({extractedDraft.confidence}% Confidence)</span>
-                    <span className="text-[10px] bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900">VERIFIED</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
+                      (extractedDraft as any).inspection_status === 'PASS' ? 'bg-emerald-100 text-emerald-900' :
+                      (extractedDraft as any).inspection_status === 'FAIL' ? 'bg-rose-100 text-rose-900' :
+                      'bg-amber-100 text-amber-900'
+                    }`}>
+                      {(extractedDraft as any).inspection_status || 'PARTIAL'}
+                    </span>
                   </div>
-                  <div className="text-slate-600 grid grid-cols-2 gap-2 mt-1">
+                  <div className="text-slate-600 grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
                     <div>PO: <strong>{extractedDraft.po_number || 'Auto-Matched'}</strong></div>
-                    <div>Received: <strong>{extractedDraft.received_quantity}</strong> units</div>
+                    <div>Received: <strong className="text-slate-900">{extractedDraft.received_quantity}</strong> units</div>
+                    <div>Accepted: <strong className="text-emerald-700">{extractedDraft.accepted_quantity}</strong> units</div>
                     <div>Damaged: <strong className="text-rose-600">{extractedDraft.damaged_quantity}</strong> units</div>
                     <div>Missing: <strong className="text-amber-600">{extractedDraft.missing_quantity}</strong> units</div>
+                    {(extractedDraft as any).defect_type && (extractedDraft as any).defect_type !== 'None' && (
+                      <div className="col-span-2 sm:col-span-3">
+                        Defect: <strong className="text-rose-700">{(extractedDraft as any).defect_type}</strong>
+                      </div>
+                    )}
                   </div>
+                  {extractedDraft.remarks && extractedDraft.remarks !== extractedDraft.raw_prompt && (
+                    <div className="text-slate-500 italic text-[10px] border-t border-slate-100 pt-1">
+                      <span className="font-bold not-italic text-slate-600">Remarks: </span>{extractedDraft.remarks}
+                    </div>
+                  )}
                 </div>
               )}
+
             </div>
           )}
 

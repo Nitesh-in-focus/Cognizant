@@ -33,6 +33,7 @@ import { Modal } from '../components/common/Modal';
 import { parseNlpPurchaseRequisition, NlpPrExtractedFields } from '../services/ai/prNlpService';
 import { getAiSupplierRecommendation } from '../services/ai/supplierRecommendationService';
 import { sendPrRequestedNotification } from '../services/emailService';
+import { VoiceInputButton } from '../components/ui/VoiceInputButton';
 
 export const PurchaseRequisitions: React.FC = () => {
   const navigate = useNavigate();
@@ -990,26 +991,38 @@ export const PurchaseRequisitions: React.FC = () => {
           {/* NLP Input Panel */}
           {createMode === 'nlp' && (
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              {/* Header row */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <label className="font-bold text-indigo-950 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-indigo-600" />
                   <span>Enter Natural Language Requirement</span>
                 </label>
-                <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">
-                  GEMINI NLP EXTRACTOR
-                </span>
+                <div className="flex items-center gap-2">
+                  {/* 🎙️ Voice Input Button */}
+                  <VoiceInputButton
+                    onTranscriptChange={(text) => setNlpPrompt(text)}
+                    existingText={nlpPrompt}
+                    label="Speak Requirement"
+                    lang="en-IN"
+                  />
+                  <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">
+                    GEMINI NLP EXTRACTOR
+                  </span>
+                </div>
               </div>
 
+              {/* Textarea — voice fills this automatically */}
               <textarea
                 rows={3}
-                placeholder="Example: We need 500 units of industrial safety gloves for Warehouse A by 25 August 2026. Priority is high."
+                placeholder="Type or 🎙️ speak: 'We need 500 units of industrial safety gloves for Warehouse A by 25 August 2026. Priority is high.'"
                 value={nlpPrompt}
                 onChange={(e) => setNlpPrompt(e.target.value)}
-                className="w-full p-3 bg-white border border-indigo-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 shadow-inner"
+                className="w-full p-3 bg-white border border-indigo-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 shadow-inner resize-none"
               />
 
               {/* Sample Prompt Chips */}
               <div className="flex flex-wrap gap-1.5 pt-1">
+                <span className="text-[10px] text-slate-500 self-center">Samples:</span>
                 {[
                   'We need 500 units of industrial safety gloves for Pune DC by 25 August 2026. Priority is high.',
                   'Order 250 brake calipers urgently for Pune DC due to sudden assembly line surge.',
@@ -1018,9 +1031,7 @@ export const PurchaseRequisitions: React.FC = () => {
                   <button
                     key={idx}
                     type="button"
-                    onClick={() => {
-                      setNlpPrompt(chip);
-                    }}
+                    onClick={() => setNlpPrompt(chip)}
                     className="px-2.5 py-1 rounded-lg bg-white hover:bg-indigo-100 border border-indigo-200 text-indigo-900 text-[10px] font-medium transition-colors cursor-pointer"
                   >
                     "{chip.substring(0, 45)}..."

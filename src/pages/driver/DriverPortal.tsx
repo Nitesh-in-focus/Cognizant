@@ -44,6 +44,9 @@ export const DriverPortal: React.FC = () => {
   const [locations, setLocations] = useState<any[]>([]);
   const [transmittingGps, setTransmittingGps] = useState(false);
   const [tripStatus, setTripStatus] = useState<'PENDING' | 'ACCEPTED' | 'REJECTED'>('ACCEPTED');
+  const [assignedDockNumber, setAssignedDockNumber] = useState<string | null>(null);
+  const [yardEntryStatus, setYardEntryStatus] = useState<string | null>(null);
+  const [parkingSlot, setParkingSlot] = useState<string | null>(null);
 
   // Driver Requests & History (Sections 3-7 of updates9.md)
   const [driverRequests, setDriverRequests] = useState<DriverAssignmentRequest[]>([]);
@@ -54,8 +57,37 @@ export const DriverPortal: React.FC = () => {
   const currentDriverId = currentUser?.user_id || 'drv-002';
   const currentDriverCode = (currentUser as any)?.driver_code || 'DRV-2026-1025';
 
+  // Realtime Supabase listener for instant dispatch and gate check-in synchronization
   useEffect(() => {
     fetchDriverTripData();
+
+    const channel = supabase
+      .channel('driver_portal_live_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shipments' },
+        () => fetchDriverTripData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yard_entries' },
+        () => fetchDriverTripData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'driver_requests' },
+        () => fetchDriverTripData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'dock_assignments' },
+        () => fetchDriverTripData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [currentUser]);
 
   const fetchDriverTripData = async () => {
@@ -70,6 +102,7 @@ export const DriverPortal: React.FC = () => {
           r.driver_id === currentDriverId ||
           r.driver_code === currentDriverCode ||
           r.driver_name === currentUser?.full_name ||
+          (r.driver_phone && r.driver_phone === (currentUser as any)?.phone) ||
           r.status === 'PENDING'
       );
       setDriverRequests(targeted);
@@ -82,7 +115,8 @@ export const DriverPortal: React.FC = () => {
         (r) =>
           (r.driver_id === currentDriverId ||
             r.driver_code === currentDriverCode ||
-            r.driver_name === currentUser?.full_name) &&
+            r.driver_name === currentUser?.full_name ||
+            (r.driver_phone && r.driver_phone === (currentUser as any)?.phone)) &&
           r.status === 'ACCEPTED'
       );
 
@@ -141,8 +175,9 @@ export const DriverPortal: React.FC = () => {
             (s: any) =>
               s.driver_id === currentDriverId ||
               s.assigned_driver_id === currentDriverId ||
-              s.driver_phone === (currentUser as any)?.phone ||
-              s.driver_name === currentUser?.full_name
+              (s.driver_phone && s.driver_phone === (currentUser as any)?.phone) ||
+              (s.driver_name && s.driver_name === currentUser?.full_name) ||
+              (s.driver_code && s.driver_code === currentDriverCode)
           );
 
           if (found) {
@@ -153,7 +188,7 @@ export const DriverPortal: React.FC = () => {
             currentUser?.role === 'SYSTEM_ADMIN' ||
             !currentUser
           ) {
-            // Active dispatched highway shipment available for carrier driver
+            // If active carrier driver, match the most recently dispatched shipment
             activeShp = directShpList[0];
           }
         }
@@ -162,6 +197,7 @@ export const DriverPortal: React.FC = () => {
       if (activeShp) {
         setActiveShipment(activeShp);
         setTripStatus((activeShp.driver_status as any) || 'ACCEPTED');
+        setParkingSlot(activeShp.parking_slot || null);
 
         if (activeShp.trucks) {
           setAssignedTruck(activeShp.trucks);
@@ -185,11 +221,55 @@ export const DriverPortal: React.FC = () => {
 
           setLocations(locData || []);
         }
+
+        // Fetch linked yard entry and dock assignment
+        try {
+          const { data: yardEntries } = await supabase
+            .from('yard_entries')
+            .select(`
+              yard_entry_id,
+              status,
+              gate_in_time,
+              dock_assignments(
+                dock_id,
+                status,
+                docks(dock_number, dock_type)
+              )
+            `)
+            .eq('shipment_id', activeShp.shipment_id)
+            .order('entry_time', { ascending: false })
+            .limit(1);
+
+          if (yardEntries && yardEntries.length > 0) {
+            const entry = yardEntries[0];
+            setYardEntryStatus(entry.status);
+            const activeDockAssignment = (entry.dock_assignments as any)?.find(
+              (a: any) => a.status === 'UNLOADING' || a.status === 'ASSIGNED'
+            );
+            if (activeDockAssignment && (activeDockAssignment as any).docks) {
+              const docksVal = (activeDockAssignment as any).docks;
+              const dockNumber = Array.isArray(docksVal)
+                ? docksVal[0]?.dock_number
+                : docksVal?.dock_number;
+              setAssignedDockNumber(dockNumber || null);
+            } else {
+              setAssignedDockNumber(null);
+            }
+          } else {
+            setYardEntryStatus(null);
+            setAssignedDockNumber(null);
+          }
+        } catch (e) {
+          console.warn('Error fetching driver yard status:', e);
+        }
       } else {
         // No task assigned and dispatched: Keep dashboard empty!
         setActiveShipment(null);
         setAssignedTruck(null);
         setLocations([]);
+        setYardEntryStatus(null);
+        setAssignedDockNumber(null);
+        setParkingSlot(null);
       }
     } catch (err: any) {
       console.error('Error fetching driver trip data:', err);
@@ -288,7 +368,7 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  // Driver "Reached at the Center" Handler (User Request)
+  // Driver "Reached at the Gate / Center" Handler
   const [markingReached, setMarkingReached] = useState(false);
 
   const handleMarkReachedCenter = async () => {
@@ -296,6 +376,8 @@ export const DriverPortal: React.FC = () => {
     try {
       setMarkingReached(true);
       const arrivalTimestamp = new Date().toISOString();
+      const derivedPoId = activeShipment.po_id || activeShipment.purchase_orders?.po_id;
+      const derivedSupplierId = activeShipment.supplier_id || activeShipment.purchase_orders?.supplier_id;
 
       // 1. Update Shipment status to ARRIVED
       const { error: shpErr } = await supabase
@@ -303,7 +385,7 @@ export const DriverPortal: React.FC = () => {
         .update({
           status: 'ARRIVED',
           driver_status: 'ARRIVED',
-          arrived_at: arrivalTimestamp,
+          actual_arrival: arrivalTimestamp,
           updated_at: arrivalTimestamp,
         })
         .eq('shipment_id', activeShipment.shipment_id);
@@ -311,19 +393,20 @@ export const DriverPortal: React.FC = () => {
       if (shpErr) throw shpErr;
 
       // 2. Update Truck status
-      if (assignedTruck) {
+      const truckId = activeShipment.truck_id || assignedTruck?.truck_id;
+      if (truckId) {
         await supabase
           .from('trucks')
           .update({
             status: 'IN_YARD',
             last_location_update: arrivalTimestamp,
           })
-          .eq('truck_id', assignedTruck.truck_id);
+          .eq('truck_id', truckId);
 
         // 3. Log arrival waypoint
         await supabase.from('truck_locations').insert([
           {
-            truck_id: assignedTruck.truck_id,
+            truck_id: truckId,
             shipment_id: activeShipment.shipment_id,
             location_name: 'Logistics Fulfillment Center - Inbound Security Gate',
             latitude: 18.7521,
@@ -335,15 +418,55 @@ export const DriverPortal: React.FC = () => {
         ]);
       }
 
+      // 4. Create/Upsert Yard Entry so Gate Officer immediately sees Driver has Arrived
+      const { data: defaultYard } = await supabase.from('yards').select('yard_id').limit(1).maybeSingle();
+      const yardId = defaultYard?.yard_id || '00000000-0000-4000-8000-000000000001';
+
+      if (truckId) {
+        // Check if yard entry exists for this shipment
+        const { data: existingEntry } = await supabase
+          .from('yard_entries')
+          .select('yard_entry_id')
+          .eq('shipment_id', activeShipment.shipment_id)
+          .maybeSingle();
+
+        if (existingEntry) {
+          await supabase
+            .from('yard_entries')
+            .update({
+              status: 'ARRIVED',
+              entry_time: arrivalTimestamp,
+              notes: 'Driver clicked Arrived on Gate. Awaiting Gate Officer security verification & check-in.',
+            })
+            .eq('yard_entry_id', existingEntry.yard_entry_id);
+        } else {
+          await supabase.from('yard_entries').insert([
+            {
+              truck_id: truckId,
+              yard_id: yardId,
+              shipment_id: activeShipment.shipment_id,
+              po_id: derivedPoId || null,
+              supplier_id: derivedSupplierId || null,
+              entry_time: arrivalTimestamp,
+              status: 'ARRIVED',
+              gate_verified: false,
+              waiting_minutes: 0,
+              notes: 'Driver clicked Arrived on Gate. Awaiting Gate Officer security verification & check-in.',
+            },
+          ]);
+        }
+      }
+
       await logAuditAction('DRIVER_REACHED_CENTER', 'shipments', activeShipment.shipment_id, {
         shipment_number: activeShipment.shipment_number,
+        po_id: derivedPoId,
         driver_name: currentUser?.full_name,
         driver_code: currentDriverCode,
         arrived_at: arrivalTimestamp,
       });
 
       showSnackbar(
-        `Arrival Logged: Shipment #${activeShipment.shipment_number} marked as ARRIVED at Logistics Center! Gate Post notified.`,
+        `Arrival Logged: Shipment #${activeShipment.shipment_number} marked as ARRIVED at Security Gate! Gate Post notified for Check-In.`,
         'success'
       );
 
@@ -459,12 +582,12 @@ export const DriverPortal: React.FC = () => {
                     className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer animate-bounce"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>{markingReached ? 'Updating Status...' : 'Reached at the Center'}</span>
+                    <span>{markingReached ? 'Updating Status...' : 'Arrived on Gate'}</span>
                   </button>
                 ) : (
                   <div className="px-3.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-extrabold flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>ARRIVED AT CENTER (AWAITING GATE-IN)</span>
+                    <span>ARRIVED ON GATE (AWAITING CHECK-IN)</span>
                   </div>
                 )}
 
@@ -475,32 +598,72 @@ export const DriverPortal: React.FC = () => {
               </div>
             </div>
 
+            {/* Gated In & Dock/Parking Assignment Banner */}
+            {yardEntryStatus && (
+              <div className={`p-4 rounded-xl border flex items-center gap-3.5 ${
+                yardEntryStatus === 'AT_DOCK'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900 shadow-xs animate-pulse'
+                  : 'bg-blue-50 border-blue-300 text-blue-900 shadow-xs'
+              }`}>
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  yardEntryStatus === 'AT_DOCK'
+                    ? 'bg-emerald-600/10 text-emerald-600'
+                    : 'bg-blue-600/10 text-blue-600'
+                }`}>
+                  <Truck className="w-6 h-6" />
+                </div>
+                <div className="flex-1">
+                  <div className="font-extrabold text-sm flex items-center gap-2">
+                    <span>SECURITY CHECK-IN VERIFIED (GATED IN)</span>
+                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-white/80 border border-blue-200">
+                      STATUS: {yardEntryStatus}
+                    </span>
+                  </div>
+                  <p className="text-xs mt-0.5 font-medium">
+                    {yardEntryStatus === 'AT_DOCK' ? (
+                      <>
+                        Proceed immediately to unloading bay: <strong className="text-emerald-700 font-extrabold text-sm">{assignedDockNumber || 'DOCK BAY #04'}</strong>.
+                      </>
+                    ) : activeShipment.parking_slot ? (
+                      <>
+                        Please route vehicle to designated parking slot: <strong className="text-blue-700 font-extrabold text-sm">{activeShipment.parking_slot}</strong> and await dock assignment queue call.
+                      </>
+                    ) : (
+                      <>
+                        Vehicle logged in facility yard. Standby in holding zone for dock allocation.
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Structured Telemetry Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 py-2 text-xs">
               <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200">
                 <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">LINKED PO ID</span>
-                <strong className="text-sm font-extrabold text-indigo-950 font-mono">
+                <strong className="text-sm font-extrabold text-indigo-950 font-mono font-bold">
                   {activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}
                 </strong>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DRIVER ID</span>
-                <strong className="text-sm font-extrabold text-cyan-700 font-mono">
-                  {currentDriverCode}
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">SHIPMENT ID</span>
+                <strong className="text-sm font-extrabold text-cyan-700 font-mono font-bold">
+                  {activeShipment.shipment_number || 'SHP-2026'}
                 </strong>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE TRAVELLED</span>
-                <strong className="text-sm font-extrabold text-slate-900">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE COVERED</span>
+                <strong className="text-sm font-extrabold text-slate-900 font-bold">
                   {activeShipment.distance_travelled_km || 126} KM
                 </strong>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE REMAINING</span>
-                <strong className="text-sm font-extrabold text-blue-600">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE TO BE COVERED</span>
+                <strong className="text-sm font-extrabold text-blue-600 font-bold">
                   {activeShipment.distance_remaining_km || 84} KM
                 </strong>
               </div>
@@ -510,33 +673,57 @@ export const DriverPortal: React.FC = () => {
                   <Sparkles className="w-3 h-3 text-indigo-600" />
                   <span>AI ETA</span>
                 </span>
-                <strong className="text-sm font-extrabold text-indigo-950">
+                <strong className="text-sm font-extrabold text-indigo-950 font-bold">
                   {activeShipment.expected_arrival ? new Date(activeShipment.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '03:40 PM'}
                 </strong>
               </div>
             </div>
 
             {/* Route & Vehicle Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 border-t border-slate-100 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-3 border-t border-slate-100 text-xs">
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">FROM ➔ TO (PO ORIGIN & DESTINATION)</span>
                 <div className="font-bold text-slate-900">FROM: {activeShipment.purchase_orders?.suppliers?.supplier_name || 'Supplier Facility'}</div>
                 <div className="text-slate-600 text-[11px]">TO: {activeShipment.purchase_orders?.warehouses?.warehouse_name || 'Customer Facility'}</div>
                 <div className="text-[10px] text-blue-600 font-mono font-semibold pt-1">
-                  Contract PO: #{activeShipment.purchase_orders?.po_number || 'N/A'} (₹{Number(activeShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')})
+                  Contract PO: #{activeShipment.purchase_orders?.po_number || 'N/A'} (Value: ₹{Number(activeShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')})
                 </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">CURRENT LOCATION</span>
-                <div className="font-bold text-cyan-800">Barrackpore, West Bengal</div>
-                <div className="text-slate-500 text-[11px]">Corridor: NH-12 Expressway Toll</div>
+                <div className="font-bold text-cyan-800 truncate">
+                  {locations[0]?.location_name || activeShipment.current_location || 'NH-12 Expressway Toll'}
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  GPS: {locations[0]?.latitude?.toFixed(4) || '18.7500'}, {locations[0]?.longitude?.toFixed(4) || '73.4000'}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">DEPARTURE & TRANSIT DETAILS</span>
+                <div className="font-bold text-slate-950">
+                  Left: {activeShipment.dispatch_date 
+                    ? new Date(activeShipment.dispatch_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                    : '09:30 AM'}
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  Est. Remaining: {activeShipment.ai_eta_hours || 4.2} hours
+                </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">ASSIGNED DOCK / PARKING</span>
-                <div className="font-bold text-slate-900">{activeShipment.parking_slot ? `Slot ${activeShipment.parking_slot}` : 'Dock Bay #04'}</div>
-                <div className="text-slate-500 text-[11px]">Payload: {activeShipment.total_quantity || 300} Units</div>
+                <div className="font-bold text-slate-900">
+                  {yardEntryStatus === 'AT_DOCK'
+                    ? `Dock Bay: ${assignedDockNumber || 'Bay #04'}`
+                    : activeShipment.parking_slot
+                    ? `Parking Slot: ${activeShipment.parking_slot}`
+                    : 'Awaiting Gate Post'}
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  Payload: {activeShipment.total_quantity || 300} Units
+                </div>
               </div>
             </div>
 

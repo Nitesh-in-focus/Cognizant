@@ -547,28 +547,40 @@ export const SupplierPortal: React.FC = () => {
     try {
       let driverId = shp.driver_id;
       let truckId = shp.truck_id;
+      let driverName = (shp as any).driver_name || '';
+      let driverPhone = (shp as any).driver_phone || '';
+      let driverCode = (shp as any).driver_code || '';
+      let vehicleNumber = (shp as any).vehicle_number || '';
 
       // If no driver assigned, auto-assign from registered carrier drivers
       if (!driverId) {
         const { data: driverUser } = await supabase
           .from('app_users')
-          .select('user_id, full_name, phone')
+          .select('user_id, full_name, phone, driver_code')
           .in('role', ['TRUCK_DRIVER', 'DRIVER'])
           .limit(1)
           .maybeSingle();
 
-        driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+        driverId = driverUser?.user_id || 'a0000000-0000-4000-8000-000000000009';
+        driverName = driverUser?.full_name || 'Rajesh Sharma';
+        driverPhone = driverUser?.phone || '+91 98234 56789';
+        driverCode = driverUser?.driver_code || 'DRV-2026-9901';
       }
 
       if (!truckId) {
         const { data: truckObj } = await supabase
           .from('trucks')
-          .select('truck_id')
+          .select('truck_id, vehicle_number, driver_name')
           .limit(1)
           .maybeSingle();
 
         truckId = truckObj?.truck_id || null;
+        vehicleNumber = truckObj?.vehicle_number || 'MH-12-AB-9901';
+        if (!driverName && truckObj?.driver_name) driverName = truckObj.driver_name;
       }
+
+      const dispatchTimestamp = new Date().toISOString();
+      const expectedArrival = shp.expected_arrival || new Date(Date.now() + 86400000 * 2).toISOString();
 
       const { error } = await supabase
         .from('shipments')
@@ -577,12 +589,22 @@ export const SupplierPortal: React.FC = () => {
           driver_status: 'ACCEPTED',
           driver_id: driverId,
           truck_id: truckId,
-          dispatch_date: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          dispatch_date: dispatchTimestamp,
+          expected_arrival: expectedArrival,
+          location_source: 'GPS_TELEMETRY',
+          updated_at: dispatchTimestamp,
         })
         .eq('shipment_id', shp.shipment_id);
 
       if (error) throw error;
+
+      // Update PO status to DISPATCHED
+      if (shp.po_id) {
+        await supabase
+          .from('purchase_orders')
+          .update({ status: 'DISPATCHED', updated_at: dispatchTimestamp })
+          .eq('po_id', shp.po_id);
+      }
 
       // Upsert into driver_requests so driver portal links seamlessly
       if (driverId) {
@@ -592,11 +614,37 @@ export const SupplierPortal: React.FC = () => {
           driver_id: driverId,
           supplier_id: targetSupplierId,
           status: 'ACCEPTED',
-          offered_amount: 7500,
-          response_at: new Date().toISOString(),
+          offered_amount: (shp as any).driver_compensation || 7500,
+          response_at: dispatchTimestamp,
           origin: shp.origin,
           destination: shp.destination,
         });
+      }
+
+      // Insert initial waypoint into truck_locations if truckId is present
+      if (truckId) {
+        await supabase.from('truck_locations').insert([
+          {
+            truck_id: truckId,
+            shipment_id: shp.shipment_id,
+            location_name: shp.origin || 'JNPT Port Container Terminal (Mumbai)',
+            latitude: 18.9496,
+            longitude: 72.9515,
+            speed: 35,
+            status: 'DISPATCHED',
+            timestamp: dispatchTimestamp,
+          },
+        ]);
+
+        await supabase
+          .from('trucks')
+          .update({
+            status: 'IN_TRANSIT',
+            driver_name: driverName,
+            driver_phone: driverPhone,
+            last_location_update: dispatchTimestamp,
+          })
+          .eq('truck_id', truckId);
       }
 
       await logAuditAction('SHIPMENT_DISPATCHED', 'shipments', shp.shipment_id, {
@@ -613,9 +661,9 @@ export const SupplierPortal: React.FC = () => {
         shipmentNumber: shp.shipment_number,
         asnNumber: shp.asn_number || `ASN-${shp.shipment_number}`,
         totalQuantity: shp.total_quantity || 100,
-        driverName: (shp as any).driver_name || 'Carrier Driver',
-        vehicleNumber: (shp as any).vehicle_number || 'Carrier Truck',
-        eta: shp.expected_arrival,
+        driverName: driverName || 'Carrier Driver',
+        vehicleNumber: vehicleNumber || 'Carrier Truck',
+        eta: expectedArrival,
       });
 
       showToast(`Shipment #${shp.shipment_number} dispatched! Driver assigned & live highway tracking started.`, 'success');
@@ -641,19 +689,26 @@ export const SupplierPortal: React.FC = () => {
       // Resolve driver & truck
       const { data: driverUser } = await supabase
         .from('app_users')
-        .select('user_id, full_name, phone')
+        .select('user_id, full_name, phone, driver_code')
         .in('role', ['TRUCK_DRIVER', 'DRIVER'])
         .limit(1)
         .maybeSingle();
 
       const { data: truckObj } = await supabase
         .from('trucks')
-        .select('truck_id, vehicle_number')
+        .select('truck_id, vehicle_number, driver_name, driver_phone')
         .limit(1)
         .maybeSingle();
 
-      const driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+      const driverId = driverUser?.user_id || 'a0000000-0000-4000-8000-000000000009';
+      const driverName = driverUser?.full_name || truckObj?.driver_name || 'Rajesh Sharma';
+      const driverPhone = driverUser?.phone || truckObj?.driver_phone || '+91 98234 56789';
+      const driverCode = driverUser?.driver_code || 'DRV-2026-9901';
       const truckId = truckObj?.truck_id || null;
+      const vehicleNumber = truckObj?.vehicle_number || 'MH-12-AB-9901';
+
+      const dispatchTimestamp = new Date().toISOString();
+      const expectedArrival = new Date(Date.now() + 86400000 * 2).toISOString();
 
       const { data: shp, error } = await supabase
         .from('shipments')
@@ -665,10 +720,10 @@ export const SupplierPortal: React.FC = () => {
             supplier_id: targetSupplierId,
             driver_id: driverId,
             truck_id: truckId,
-            origin: supplier?.city ? `${supplier.city} Facility` : 'Supplier Facility',
-            destination: po.warehouses?.warehouse_name || 'Central Distribution DC',
-            dispatch_date: new Date().toISOString(),
-            expected_arrival: new Date(Date.now() + 86400000 * 2).toISOString(),
+            origin: supplier?.city ? `${supplier.city} Facility` : 'Mumbai JNPT Port Terminal',
+            destination: po.warehouses?.warehouse_name || 'Pune Central DC',
+            dispatch_date: dispatchTimestamp,
+            expected_arrival: expectedArrival,
             status: 'DISPATCHED',
             driver_status: 'ACCEPTED',
             location_source: 'GPS_TELEMETRY',
@@ -680,6 +735,12 @@ export const SupplierPortal: React.FC = () => {
 
       if (error) throw error;
 
+      // Update PO status to DISPATCHED
+      await supabase
+        .from('purchase_orders')
+        .update({ status: 'DISPATCHED', updated_at: dispatchTimestamp })
+        .eq('po_id', po.po_id);
+
       // Save driver request as ACCEPTED
       await supabase.from('driver_requests').insert([
         {
@@ -689,11 +750,37 @@ export const SupplierPortal: React.FC = () => {
           supplier_id: targetSupplierId,
           status: 'ACCEPTED',
           offered_amount: 7500,
-          response_at: new Date().toISOString(),
+          response_at: dispatchTimestamp,
           origin: shp.origin,
           destination: shp.destination,
         },
       ]);
+
+      // Insert initial waypoint into truck_locations
+      if (truckId) {
+        await supabase.from('truck_locations').insert([
+          {
+            truck_id: truckId,
+            shipment_id: shp.shipment_id,
+            location_name: shp.origin || 'JNPT Port Container Terminal (Mumbai)',
+            latitude: 18.9496,
+            longitude: 72.9515,
+            speed: 35,
+            status: 'DISPATCHED',
+            timestamp: dispatchTimestamp,
+          },
+        ]);
+
+        await supabase
+          .from('trucks')
+          .update({
+            status: 'IN_TRANSIT',
+            driver_name: driverName,
+            driver_phone: driverPhone,
+            last_location_update: dispatchTimestamp,
+          })
+          .eq('truck_id', truckId);
+      }
 
       await logAuditAction('SHIPMENT_DISPATCHED', 'shipments', shp.shipment_id, {
         shipment_number: shipmentNumber,
@@ -709,12 +796,12 @@ export const SupplierPortal: React.FC = () => {
         shipmentNumber: shipmentNumber,
         asnNumber: asnNumber,
         totalQuantity: remainingQty,
-        driverName: driverUser?.full_name || 'Tikiyapara',
-        vehicleNumber: truckObj?.vehicle_number || 'MH-12-TR-4699',
-        eta: shp.expected_arrival,
+        driverName: driverName,
+        vehicleNumber: vehicleNumber,
+        eta: expectedArrival,
       });
 
-      showToast(`Shipment #${shipmentNumber} dispatched to Driver ${driverUser?.full_name || 'Fleet'}! Live tracking activated.`, 'success');
+      showToast(`1-Click Dispatch: Shipment #${shipmentNumber} generated, driver assigned & live GPS tracking started!`, 'success');
       fetchSupplierData();
     } catch (err: any) {
       showToast('Quick dispatch failed: ' + err.message, 'error');
@@ -731,7 +818,7 @@ export const SupplierPortal: React.FC = () => {
 
   const handlePartialDispatch = async () => {
     if (!dispatchPo) return;
-    const { remainingQty, totalPoQty } = getPoQuantityMetrics(dispatchPo);
+    const { remainingQty } = getPoQuantityMetrics(dispatchPo);
 
     if (dispatchQty <= 0) {
       showToast('Dispatch quantity must be > 0.', 'error');
@@ -750,19 +837,26 @@ export const SupplierPortal: React.FC = () => {
       // Resolve driver & truck
       const { data: driverUser } = await supabase
         .from('app_users')
-        .select('user_id, full_name, phone')
+        .select('user_id, full_name, phone, driver_code')
         .in('role', ['TRUCK_DRIVER', 'DRIVER'])
         .limit(1)
         .maybeSingle();
 
       const { data: truckObj } = await supabase
         .from('trucks')
-        .select('truck_id, vehicle_number')
+        .select('truck_id, vehicle_number, driver_name, driver_phone')
         .limit(1)
         .maybeSingle();
 
-      const driverId = driverUser?.user_id || 'de05cc55-bde3-4297-957e-3f165534fded';
+      const driverId = driverUser?.user_id || 'a0000000-0000-4000-8000-000000000009';
+      const driverName = driverUser?.full_name || truckObj?.driver_name || 'Rajesh Sharma';
+      const driverPhone = driverUser?.phone || truckObj?.driver_phone || '+91 98234 56789';
+      const driverCode = driverUser?.driver_code || 'DRV-2026-9901';
       const truckId = truckObj?.truck_id || null;
+      const vehicleNumber = truckObj?.vehicle_number || 'MH-12-AB-9901';
+
+      const dispatchTimestamp = new Date().toISOString();
+      const expectedArrival = new Date(Date.now() + 86400000 * 2).toISOString();
 
       const { data: shp, error } = await supabase
         .from('shipments')
@@ -773,18 +867,24 @@ export const SupplierPortal: React.FC = () => {
           supplier_id: targetSupplierId,
           driver_id: driverId,
           truck_id: truckId,
-          origin: supplier?.city ? `${supplier.city} Facility` : 'Supplier Facility',
-          destination: dispatchPo.warehouses?.warehouse_name || 'Central Warehouse',
-          dispatch_date: new Date().toISOString(),
-          expected_arrival: new Date(Date.now() + 86400000 * 2).toISOString(),
+          origin: supplier?.city ? `${supplier.city} Facility` : 'Mumbai JNPT Port Terminal',
+          destination: dispatchPo.warehouses?.warehouse_name || 'Pune Central DC',
+          dispatch_date: dispatchTimestamp,
+          expected_arrival: expectedArrival,
           status: 'DISPATCHED',
           driver_status: 'ACCEPTED',
-          location_source: 'DECLARED_BY_SUPPLIER',
+          location_source: 'GPS_TELEMETRY',
           total_quantity: dispatchQty,
         }])
         .select().single();
 
       if (error) throw error;
+
+      // Update PO status to DISPATCHED
+      await supabase
+        .from('purchase_orders')
+        .update({ status: 'DISPATCHED', updated_at: dispatchTimestamp })
+        .eq('po_id', dispatchPo.po_id);
 
       // Save driver request as ACCEPTED
       await supabase.from('driver_requests').insert([
@@ -795,11 +895,37 @@ export const SupplierPortal: React.FC = () => {
           supplier_id: targetSupplierId,
           status: 'ACCEPTED',
           offered_amount: 7500,
-          response_at: new Date().toISOString(),
+          response_at: dispatchTimestamp,
           origin: shp.origin,
           destination: shp.destination,
         },
       ]);
+
+      // Insert initial waypoint into truck_locations
+      if (truckId) {
+        await supabase.from('truck_locations').insert([
+          {
+            truck_id: truckId,
+            shipment_id: shp.shipment_id,
+            location_name: shp.origin || 'JNPT Port Container Terminal (Mumbai)',
+            latitude: 18.9496,
+            longitude: 72.9515,
+            speed: 35,
+            status: 'DISPATCHED',
+            timestamp: dispatchTimestamp,
+          },
+        ]);
+
+        await supabase
+          .from('trucks')
+          .update({
+            status: 'IN_TRANSIT',
+            driver_name: driverName,
+            driver_phone: driverPhone,
+            last_location_update: dispatchTimestamp,
+          })
+          .eq('truck_id', truckId);
+      }
 
       await logAuditAction('PARTIAL_DISPATCH', 'shipments', shp.shipment_id, {
         po_id: dispatchPo.po_id,
@@ -815,9 +941,9 @@ export const SupplierPortal: React.FC = () => {
         shipmentNumber: shipmentNumber,
         asnNumber: asnNumber,
         totalQuantity: dispatchQty,
-        driverName: driverUser?.full_name || 'Tikiyapara',
-        vehicleNumber: truckObj?.vehicle_number || 'MH-12-TR-4699',
-        eta: shp.expected_arrival,
+        driverName: driverName,
+        vehicleNumber: vehicleNumber,
+        eta: expectedArrival,
       });
 
       showToast(`Partial dispatch: ${dispatchQty} units dispatched to driver (${remainingQty - dispatchQty} remain on PO).`, 'success');

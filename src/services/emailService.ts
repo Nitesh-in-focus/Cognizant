@@ -976,6 +976,111 @@ export const triggerPoAcceptedNotification = (poId: string, supplierName: string
 export const triggerShipmentDispatchedNotification = sendDispatchNotification;
 export const triggerFinanceExceptionNotification = sendFinanceExceptionNotification;
 
+/**
+ * Send Exception Resolved Notification to Finance Controllers
+ * Triggered when a PR Officer settles an exception in the Exceptions Hub.
+ */
+export async function sendExceptionResolvedNotification(payload: {
+  exceptionId: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  poNumber?: string;
+  supplierName?: string;
+  resolutionAction: string;
+  resolutionNote?: string;
+  resolvedBy?: string;
+  amount?: number;
+}): Promise<EmailResult> {
+  try {
+    const { data: finUsers } = await supabase
+      .from('app_users')
+      .select('user_id, full_name, email, role')
+      .eq('role', 'FINANCE')
+      .eq('status', 'ACTIVE');
+
+    const financeRecipients =
+      finUsers && finUsers.length > 0
+        ? finUsers.map((u) => ({
+            email: u.email.trim(),
+            fullName: u.full_name || 'Financial Controller',
+            userId: u.user_id,
+          }))
+        : [
+            {
+              email: 'finance@supplysync.com',
+              fullName: 'Financial Controller',
+              userId: '00000000-0000-4000-8000-000000000002',
+            },
+          ];
+
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:5173';
+    const templateId = EMAILJS_CONFIG.notificationTemplateId || EMAILJS_CONFIG.poActionTemplateId;
+
+    let anySent = false;
+    let lastError: string | undefined = undefined;
+
+    for (const recipient of financeRecipients) {
+      const templateParams = {
+        to_email: recipient.email,
+        email: recipient.email,
+        recipient_email: recipient.email,
+        to_name: recipient.fullName,
+        name: recipient.fullName,
+        event_type: 'EXCEPTION_RESOLVED_BY_PR',
+        subject: `[Supply Sync] Exception #${payload.exceptionId} Settled by PR Officer — Ready for Payout`,
+        title: `Exception #${payload.exceptionId} Settled`,
+        invoice_number: payload.invoiceNumber || 'N/A',
+        po_number: payload.poNumber || 'N/A',
+        supplier_name: payload.supplierName || 'Vendor Partner',
+        resolution_action: payload.resolutionAction,
+        resolved_by: payload.resolvedBy || 'Procurement Officer',
+        action_url: `${origin}/payments`,
+        view_url: `${origin}/invoices`,
+        message: `Procurement Officer ${payload.resolvedBy || ''} has resolved discrepancy on Exception #${payload.exceptionId} (Invoice #${payload.invoiceNumber || 'N/A'}) via ${payload.resolutionAction}. Payment hold has been lifted and invoice is approved for banking settlement. Notes: ${payload.resolutionNote || 'None'}`,
+      };
+
+      let status: 'SENT' | 'FAILED' = 'SENT';
+      let errorMessage: string | undefined = undefined;
+
+      if (EMAILJS_CONFIG.isConfigured() && templateId) {
+        try {
+          await emailjs.send(EMAILJS_CONFIG.serviceId, templateId, templateParams, EMAILJS_CONFIG.publicKey);
+          anySent = true;
+          console.log(`[EmailJS] Dispatched Exception Settled Notification to Finance: ${recipient.email}`);
+        } catch (err: any) {
+          status = 'FAILED';
+          errorMessage = err?.text || err?.message || 'EmailJS delivery failed';
+          lastError = errorMessage;
+        }
+      } else {
+        status = 'FAILED';
+        errorMessage = 'EmailJS credentials not configured in .env';
+        lastError = errorMessage;
+      }
+
+      await logEmailNotification({
+        event_type: 'EXCEPTION_RESOLVED_BY_PR',
+        recipient_user_id: recipient.userId,
+        recipient_email: recipient.email,
+        recipient_name: recipient.fullName,
+        entity_type: 'exceptions',
+        entity_id: payload.exceptionId,
+        invoice_id: payload.invoiceId,
+        status: status,
+        emailjs_template_id: templateId || 'NOTIFICATION_TEMPLATE',
+        template_params: templateParams,
+        error_message: errorMessage,
+      });
+    }
+
+    return { success: anySent, error: lastError, notConfigured: !EMAILJS_CONFIG.isConfigured() };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export const triggerExceptionResolvedNotification = sendExceptionResolvedNotification;
+
 export interface EmailPayload {
   eventType: string;
   recipientEmail: string;
