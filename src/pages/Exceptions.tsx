@@ -17,6 +17,7 @@ import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { triggerExceptionResolvedNotification } from '../services/emailService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Exceptions: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, currentUser, logAuditAction } = useApp();
@@ -25,6 +26,13 @@ export const Exceptions: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSubmittingResolution, setIsSubmittingResolution] = useState(false);
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['exceptions', 'purchase_orders', 'invoices', 'goods_receipts'],
+    channelName: 'exceptions_page_realtime',
+    callback: () => fetchExceptions(true),
+  });
 
   // Resolution Modal State
   const [resolveTarget, setResolveTarget] = useState<any | null>(null);
@@ -35,9 +43,9 @@ export const Exceptions: React.FC = () => {
     fetchExceptions();
   }, [refreshKey]);
 
-  const fetchExceptions = async () => {
+  const fetchExceptions = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('exceptions')
         .select(`

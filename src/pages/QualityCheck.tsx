@@ -29,9 +29,10 @@ import { Modal } from '../components/common/Modal';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { analyzeQualityInspection, QualityAnalysisResult } from '../services/ai/qualityAnalysisService';
 import { sendEmailNotification } from '../services/notificationService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const QualityCheckPage: React.FC = () => {
-  const { currentUser, role, showToast, canFinalizeQC, effectiveSupplierId, logAuditAction } = useApp();
+  const { currentUser, role, showToast, canFinalizeQC, effectiveSupplierId, logAuditAction, refreshKey } = useApp();
   const [qualityChecks, setQualityChecks] = useState<QualityCheck[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -40,6 +41,15 @@ export const QualityCheckPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [activeTab, setActiveTab] = useState<'inspections' | 'supplier_profiles'>('inspections');
+
+  const isSupplierUser = role === 'SUPPLIER';
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['quality_checks', 'goods_receipts', 'purchase_orders'],
+    channelName: 'qc_page_realtime',
+    callback: () => fetchData(true),
+  });
 
   // Supplier Profile view
   const [selectedSupplierProfile, setSelectedSupplierProfile] = useState<{
@@ -73,21 +83,18 @@ export const QualityCheckPage: React.FC = () => {
     factor_damage_condition: 9,
     factor_documentation: 10,
     factor_delivery_condition: 9,
-    factor_compliance: 10,
-    factor_overall: 9,
-    remarks: '',
-    evidence_url: '',
+    factor_timeliness: 10,
+    factor_communication: 9,
+    inspector_notes: 'All items verified against PO standards. Minor package scuffing logged.',
   });
-
-  const isSupplierUser = role === 'SUPPLIER';
 
   useEffect(() => {
     fetchData();
-  }, [effectiveSupplierId, role]);
+  }, [effectiveSupplierId, role, refreshKey]);
 
-  const fetchData = async () => {
+  const fetchData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       let qcQuery = supabase
         .from('quality_checks')
         .select(`

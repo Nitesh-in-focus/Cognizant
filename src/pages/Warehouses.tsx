@@ -19,6 +19,7 @@ import { useApp } from '../contexts/AppContext';
 import { Modal } from '../components/common/Modal';
 import { LocationPickerModal } from '../components/maps/LocationPickerModal';
 import { Warehouse } from '../types/database';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Warehouses: React.FC = () => {
   const { role, refreshKey, triggerRefresh, showSnackbar, logAuditAction } = useApp();
@@ -27,6 +28,13 @@ export const Warehouses: React.FC = () => {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['warehouses', 'docks'],
+    channelName: 'warehouses_page_realtime',
+    callback: () => fetchWarehouses(true),
+  });
 
   // Modals
   const [openCreate, setOpenCreate] = useState(false);
@@ -50,9 +58,9 @@ export const Warehouses: React.FC = () => {
     fetchWarehouses();
   }, [refreshKey]);
 
-  const fetchWarehouses = async () => {
+  const fetchWarehouses = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('warehouses')
         .select('*')

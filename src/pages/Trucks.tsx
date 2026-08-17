@@ -11,6 +11,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Trucks: React.FC = () => {
   const { refreshKey, triggerRefresh } = useApp();
@@ -19,13 +20,20 @@ export const Trucks: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['trucks', 'yard_entries'],
+    channelName: 'trucks_page_realtime',
+    callback: () => fetchTrucks(true),
+  });
+
   useEffect(() => {
     fetchTrucks();
   }, [refreshKey]);
 
-  const fetchTrucks = async () => {
+  const fetchTrucks = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('trucks')
         .select('*')

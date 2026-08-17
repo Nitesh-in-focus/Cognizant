@@ -57,6 +57,12 @@ export const DriverPortal: React.FC = () => {
   const currentDriverId = currentUser?.user_id || 'drv-002';
   const currentDriverCode = (currentUser as any)?.driver_code || 'DRV-2026-1025';
 
+  // Available shipments for driver selection
+  const [availableShipments, setAvailableShipments] = useState<any[]>([]);
+
+  // Driver can type their current location name for the GPS ping
+  const [locationNameInput, setLocationNameInput] = useState('NH-48 Expressway Talegaon Toll');
+
   // Realtime Supabase listener for instant dispatch and gate check-in synchronization
   useEffect(() => {
     fetchDriverTripData();
@@ -90,13 +96,12 @@ export const DriverPortal: React.FC = () => {
     };
   }, [currentUser]);
 
-  const fetchDriverTripData = async () => {
+  const fetchDriverTripData = async (selectedShipmentId?: string) => {
     try {
       setLoading(true);
 
       // 1. Fetch driver incoming assignment requests from database/service
       const allRequests = await fetchDriverRequests();
-      // Targeted requests for this driver
       const targeted = allRequests.filter(
         (r) =>
           r.driver_id === currentDriverId ||
@@ -108,89 +113,85 @@ export const DriverPortal: React.FC = () => {
       setDriverRequests(targeted);
 
       // 2. Active dispatched statuses on the highway
-      const dispatchedStatuses = ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING', 'UNLOADING'];
+      const dispatchedStatuses = [
+        'DISPATCHED',
+        'IN_TRANSIT',
+        'ARRIVING',
+        'ARRIVED',
+        'AT_GATE',
+        'WAITING',
+        'UNLOADING',
+        'PARTIALLY_DISPATCHED',
+      ];
 
-      // Find any request that this driver accepted
-      const acceptedRequest = allRequests.find(
-        (r) =>
-          (r.driver_id === currentDriverId ||
-            r.driver_code === currentDriverCode ||
-            r.driver_name === currentUser?.full_name ||
-            (r.driver_phone && r.driver_phone === (currentUser as any)?.phone)) &&
-          r.status === 'ACCEPTED'
-      );
+      // Query all active dispatched shipments with PO, suppliers, warehouses, and trucks
+      const { data: allDispatched, error: shpErr } = await supabase
+        .from('shipments')
+        .select(`
+          *,
+          purchase_orders(
+            po_id,
+            po_number,
+            total_amount,
+            order_date,
+            status,
+            suppliers(supplier_id, supplier_name, city, phone),
+            warehouses(warehouse_name, city, address)
+          ),
+          trucks(*)
+        `)
+        .in('status', dispatchedStatuses)
+        .order('created_at', { ascending: false });
+
+      if (shpErr) {
+        console.warn('Shipments fetch error, attempting fallback:', shpErr);
+      }
+
+      const shipmentsList = allDispatched || [];
+      setAvailableShipments(shipmentsList);
 
       let activeShp: any = null;
 
-      // Check if accepted shipment has been officially dispatched by supplier
-      if (acceptedRequest?.shipment_id) {
-        const { data: reqShp } = await supabase
-          .from('shipments')
-          .select(`
-            *,
-            purchase_orders(
-              po_id,
-              po_number,
-              total_amount,
-              order_date,
-              status,
-              suppliers(supplier_id, supplier_name, city, phone),
-              warehouses(warehouse_name, city, address)
-            ),
-            trucks(*)
-          `)
-          .eq('shipment_id', acceptedRequest.shipment_id)
-          .in('status', dispatchedStatuses)
-          .maybeSingle();
+      // 1. If explicit shipment ID passed/selected
+      if (selectedShipmentId) {
+        activeShp = shipmentsList.find((s: any) => s.shipment_id === selectedShipmentId);
+      }
 
-        if (reqShp) {
-          activeShp = reqShp;
+      // 2. If previously selected active shipment is still valid
+      if (!activeShp && activeShipment) {
+        activeShp = shipmentsList.find((s: any) => s.shipment_id === activeShipment.shipment_id);
+      }
+
+      // 3. Check if accepted driver request matches
+      if (!activeShp) {
+        const acceptedRequest = allRequests.find(
+          (r) =>
+            (r.driver_id === currentDriverId ||
+              r.driver_code === currentDriverCode ||
+              r.driver_name === currentUser?.full_name ||
+              (r.driver_phone && r.driver_phone === (currentUser as any)?.phone)) &&
+            r.status === 'ACCEPTED'
+        );
+        if (acceptedRequest?.shipment_id) {
+          activeShp = shipmentsList.find((s: any) => s.shipment_id === acceptedRequest.shipment_id);
         }
       }
 
-      // If not from accepted request, check direct driver assignment in shipments table
-      if (!activeShp) {
-        // Query shipments that have been DISPATCHED and assigned to this driver
-        const { data: directShpList } = await supabase
-          .from('shipments')
-          .select(`
-            *,
-            purchase_orders(
-              po_id,
-              po_number,
-              total_amount,
-              order_date,
-              status,
-              suppliers(supplier_id, supplier_name, city, phone),
-              warehouses(warehouse_name, city, address)
-            ),
-            trucks(*)
-          `)
-          .in('status', dispatchedStatuses)
-          .order('created_at', { ascending: false });
-
-        if (directShpList && directShpList.length > 0) {
-          // Find the one specifically belonging to this driver
-          const found = directShpList.find(
-            (s: any) =>
-              s.driver_id === currentDriverId ||
-              s.assigned_driver_id === currentDriverId ||
-              (s.driver_phone && s.driver_phone === (currentUser as any)?.phone) ||
-              (s.driver_name && s.driver_name === currentUser?.full_name) ||
-              (s.driver_code && s.driver_code === currentDriverCode)
-          );
-
-          if (found) {
-            activeShp = found;
-          } else if (
-            currentUser?.role === 'TRUCK_DRIVER' ||
-            (currentUser?.role as string) === 'DRIVER' ||
-            currentUser?.role === 'SYSTEM_ADMIN' ||
-            !currentUser
-          ) {
-            // If active carrier driver, match the most recently dispatched shipment
-            activeShp = directShpList[0];
-          }
+      // 4. Check direct driver assignment match
+      if (!activeShp && shipmentsList.length > 0) {
+        const found = shipmentsList.find(
+          (s: any) =>
+            s.driver_id === currentDriverId ||
+            s.assigned_driver_id === currentDriverId ||
+            (s.driver_phone && s.driver_phone === (currentUser as any)?.phone) ||
+            (s.driver_name && s.driver_name === currentUser?.full_name) ||
+            (s.driver_code && s.driver_code === currentDriverCode)
+        );
+        if (found) {
+          activeShp = found;
+        } else {
+          // Default to the latest active dispatched shipment from supplier
+          activeShp = shipmentsList[0];
         }
       }
 
@@ -263,7 +264,6 @@ export const DriverPortal: React.FC = () => {
           console.warn('Error fetching driver yard status:', e);
         }
       } else {
-        // No task assigned and dispatched: Keep dashboard empty!
         setActiveShipment(null);
         setAssignedTruck(null);
         setLocations([]);
@@ -277,6 +277,7 @@ export const DriverPortal: React.FC = () => {
       setLoading(false);
     }
   };
+
 
   // Accept incoming driver request (First Acceptance Wins)
   const handleAcceptRequest = async (requestId: string) => {
@@ -332,6 +333,7 @@ export const DriverPortal: React.FC = () => {
       const newLat = 18.7500 + Math.random() * 0.05;
       const newLng = 73.4000 + Math.random() * 0.05;
       const speed = Math.floor(55 + Math.random() * 20);
+      const locationName = locationNameInput.trim() || 'NH-48 Expressway Talegaon Toll';
 
       const { data: newLoc, error } = await supabase
         .from('truck_locations')
@@ -339,7 +341,7 @@ export const DriverPortal: React.FC = () => {
           {
             truck_id: assignedTruck.truck_id,
             shipment_id: activeShipment.shipment_id,
-            location_name: 'NH-48 Expressway Talegaon Toll',
+            location_name: locationName,
             latitude: newLat,
             longitude: newLng,
             speed,
@@ -352,6 +354,16 @@ export const DriverPortal: React.FC = () => {
 
       if (error) throw error;
 
+      // Also write current location back to the shipment record
+      // so Shipments page and Traceability show live driver position
+      await supabase
+        .from('shipments')
+        .update({
+          current_location: locationName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('shipment_id', activeShipment.shipment_id);
+
       await supabase
         .from('trucks')
         .update({
@@ -360,7 +372,8 @@ export const DriverPortal: React.FC = () => {
         .eq('truck_id', assignedTruck.truck_id);
 
       setLocations((prev) => [newLoc, ...prev].slice(0, 5));
-      showSnackbar(`GPS Ping Transmitted: Lat ${newLat.toFixed(4)}, Lng ${newLng.toFixed(4)} at ${speed} km/h`, 'success');
+      setActiveShipment((prev: any) => prev ? { ...prev, current_location: locationName } : prev);
+      showSnackbar(`GPS Ping Transmitted: ${locationName} — Lat ${newLat.toFixed(4)}, Lng ${newLng.toFixed(4)} at ${speed} km/h`, 'success');
     } catch (err: any) {
       showSnackbar('GPS transmission failed: ' + err.message, 'error');
     } finally {
@@ -497,14 +510,28 @@ export const DriverPortal: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1">
-                Driver: <strong className="text-white">{currentUser?.full_name || 'Rajesh Sharma'}</strong> (Driver ID: <strong className="text-cyan-300 font-mono">{currentDriverCode}</strong>) • Assigned Truck: <strong className="text-white">Tata Signa 4825 (MH-12-AB-9901)</strong>
+                Driver: <strong className="text-white">{currentUser?.full_name || 'Rajesh Sharma'}</strong> (Driver ID: <strong className="text-cyan-300 font-mono">{currentDriverCode}</strong>) • Assigned Truck: <strong className="text-white">{assignedTruck?.vehicle_number || 'Tata Signa 4825 (MH-12-AB-9901)'}</strong>
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {availableShipments.length > 1 && (
+              <select
+                value={activeShipment?.shipment_id || ''}
+                onChange={(e) => fetchDriverTripData(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-cyan-300 focus:outline-none focus:border-cyan-400"
+              >
+                {availableShipments.map((s) => (
+                  <option key={s.shipment_id} value={s.shipment_id}>
+                    PO: {s.purchase_orders?.po_number || s.po_id?.slice(0, 8) || 'PO'} — {s.shipment_number} ({s.status})
+                  </option>
+                ))}
+              </select>
+            )}
+
             <button
-              onClick={fetchDriverTripData}
+              onClick={() => fetchDriverTripData()}
               className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
               title="Refresh telemetry"
             >
@@ -553,287 +580,307 @@ export const DriverPortal: React.FC = () => {
         </button>
       </div>
 
-      {/* ── TAB 1: MY LIVE JOURNEY (Active Dispatched Trip) ── */}
+      {/* ── TAB 1: DRIVER MAP DASHBOARD (Active Dispatched Trip) ── */}
       {activeTab === 'current_trip' && activeShipment && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-              <div>
-                <div className="text-xs font-black text-cyan-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <Navigation className="w-3.5 h-3.5" />
-                  <span>MY LIVE HIGHWAY MANIFEST</span>
+        <div className="space-y-4">
+
+          {/* ── ARRIVED / GATE STATUS BANNER ── */}
+          {yardEntryStatus && (
+            <div className={`p-4 rounded-2xl border-2 flex items-center gap-3.5 ${
+              yardEntryStatus === 'AT_DOCK'
+                ? 'bg-emerald-50 border-emerald-400 shadow-md animate-pulse'
+                : 'bg-blue-50 border-blue-400 shadow-md'
+            }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                yardEntryStatus === 'AT_DOCK' ? 'bg-emerald-600/10 text-emerald-600' : 'bg-blue-600/10 text-blue-600'
+              }`}>
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <div className="font-extrabold text-sm flex items-center gap-2">
+                  SECURITY CHECK-IN VERIFIED (GATED IN)
+                  <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-white/80 border border-blue-200">STATUS: {yardEntryStatus}</span>
                 </div>
-                <div className="text-xl font-extrabold text-slate-900 mt-0.5 flex flex-wrap items-center gap-2">
-                  <span>SHIPMENT: {activeShipment.shipment_number || 'SHP-1004'}</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    LINKED PO ID: {activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}
-                  </span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-md font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                    TRUCK: {assignedTruck?.vehicle_number || 'WB-12-AB-1234'}
-                  </span>
+                <p className="text-xs mt-0.5 font-medium text-slate-700">
+                  {yardEntryStatus === 'AT_DOCK' ? (
+                    <>Proceed to unloading bay: <strong className="text-emerald-700 font-extrabold text-sm">{assignedDockNumber || 'DOCK BAY #04'}</strong></>
+                  ) : activeShipment.parking_slot ? (
+                    <>Route to parking slot: <strong className="text-blue-700 font-extrabold text-sm">{activeShipment.parking_slot}</strong> — await dock queue call.</>
+                  ) : (
+                    <>Vehicle logged in yard. Standby in holding zone for dock allocation.</>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ─── HERO MAP ─── */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* Map header bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-gradient-to-r from-slate-900 to-cyan-950 gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center">
+                  <Navigation className="w-5 h-5 text-cyan-400" />
+                </div>
+                <div>
+                  <div className="text-xs font-extrabold text-white flex items-center gap-2">
+                    LIVE ROUTE & HIGHWAY TELEMETRY
+                    <span className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-extrabold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      LIVE
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 font-mono mt-0.5">
+                    PO: <strong className="text-cyan-300 font-extrabold">{activeShipment.purchase_orders?.po_number || activeShipment.po_id || '—'}</strong>
+                    {' · '} Supplier: <strong className="text-white">{activeShipment.purchase_orders?.suppliers?.supplier_name || 'Vendor Partner'}</strong>
+                    {' · '} Truck: <strong className="text-white">{assignedTruck?.vehicle_number || 'MH-12-AB-9901'}</strong>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              {/* Action Buttons & Status */}
+              <div className="flex items-center gap-2.5">
                 {activeShipment.status !== 'ARRIVED' && activeShipment.status !== 'AT_GATE' && activeShipment.status !== 'WAITING' && activeShipment.status !== 'UNLOADED' && activeShipment.status !== 'COMPLETED' ? (
                   <button
                     onClick={handleMarkReachedCenter}
                     disabled={markingReached}
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer animate-bounce"
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold text-xs shadow-lg hover:shadow-xl flex items-center gap-2 animate-bounce cursor-pointer transition-all border border-emerald-400/40"
+                    title="Click when truck reaches the warehouse gate"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>{markingReached ? 'Updating Status...' : 'Arrived on Gate'}</span>
+                    <span>{markingReached ? 'Updating Status...' : 'Reached'}</span>
                   </button>
                 ) : (
-                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-extrabold flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>ARRIVED ON GATE (AWAITING CHECK-IN)</span>
+                  <div className="px-3.5 py-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>REACHED GATE (AWAITING CHECK-IN)</span>
                   </div>
                 )}
-
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>STATUS: {activeShipment.status || 'IN TRANSIT'}</span>
-                </span>
-              </div>
-            </div>
-
-            {/* Gated In & Dock/Parking Assignment Banner */}
-            {yardEntryStatus && (
-              <div className={`p-4 rounded-xl border flex items-center gap-3.5 ${
-                yardEntryStatus === 'AT_DOCK'
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900 shadow-xs animate-pulse'
-                  : 'bg-blue-50 border-blue-300 text-blue-900 shadow-xs'
-              }`}>
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  yardEntryStatus === 'AT_DOCK'
-                    ? 'bg-emerald-600/10 text-emerald-600'
-                    : 'bg-blue-600/10 text-blue-600'
+                <span className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold border flex items-center gap-1.5 ${
+                  activeShipment.status === 'ARRIVED' || activeShipment.status === 'AT_GATE'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
                 }`}>
-                  <Truck className="w-6 h-6" />
-                </div>
-                <div className="flex-1">
-                  <div className="font-extrabold text-sm flex items-center gap-2">
-                    <span>SECURITY CHECK-IN VERIFIED (GATED IN)</span>
-                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-white/80 border border-blue-200">
-                      STATUS: {yardEntryStatus}
-                    </span>
-                  </div>
-                  <p className="text-xs mt-0.5 font-medium">
-                    {yardEntryStatus === 'AT_DOCK' ? (
-                      <>
-                        Proceed immediately to unloading bay: <strong className="text-emerald-700 font-extrabold text-sm">{assignedDockNumber || 'DOCK BAY #04'}</strong>.
-                      </>
-                    ) : activeShipment.parking_slot ? (
-                      <>
-                        Please route vehicle to designated parking slot: <strong className="text-blue-700 font-extrabold text-sm">{activeShipment.parking_slot}</strong> and await dock assignment queue call.
-                      </>
-                    ) : (
-                      <>
-                        Vehicle logged in facility yard. Standby in holding zone for dock allocation.
-                      </>
-                    )}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Structured Telemetry Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 py-2 text-xs">
-              <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200">
-                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">LINKED PO ID</span>
-                <strong className="text-sm font-extrabold text-indigo-950 font-mono font-bold">
-                  {activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}
-                </strong>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">SHIPMENT ID</span>
-                <strong className="text-sm font-extrabold text-cyan-700 font-mono font-bold">
-                  {activeShipment.shipment_number || 'SHP-2026'}
-                </strong>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE COVERED</span>
-                <strong className="text-sm font-extrabold text-slate-900 font-bold">
-                  {activeShipment.distance_travelled_km || 126} KM
-                </strong>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DISTANCE TO BE COVERED</span>
-                <strong className="text-sm font-extrabold text-blue-600 font-bold">
-                  {activeShipment.distance_remaining_km || 84} KM
-                </strong>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200">
-                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-indigo-600" />
-                  <span>AI ETA</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                  {activeShipment.status || 'IN_TRANSIT'}
                 </span>
-                <strong className="text-sm font-extrabold text-indigo-950 font-bold">
-                  {activeShipment.expected_arrival ? new Date(activeShipment.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '03:40 PM'}
-                </strong>
               </div>
             </div>
 
-            {/* Route & Vehicle Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-3 border-t border-slate-100 text-xs">
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">FROM ➔ TO (PO ORIGIN & DESTINATION)</span>
-                <div className="font-bold text-slate-900">FROM: {activeShipment.purchase_orders?.suppliers?.supplier_name || 'Supplier Facility'}</div>
-                <div className="text-slate-600 text-[11px]">TO: {activeShipment.purchase_orders?.warehouses?.warehouse_name || 'Customer Facility'}</div>
-                <div className="text-[10px] text-blue-600 font-mono font-semibold pt-1">
-                  Contract PO: #{activeShipment.purchase_orders?.po_number || 'N/A'} (Value: ₹{Number(activeShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')})
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">CURRENT LOCATION</span>
-                <div className="font-bold text-cyan-800 truncate">
-                  {locations[0]?.location_name || activeShipment.current_location || 'NH-12 Expressway Toll'}
-                </div>
-                <div className="text-slate-500 text-[11px]">
-                  GPS: {locations[0]?.latitude?.toFixed(4) || '18.7500'}, {locations[0]?.longitude?.toFixed(4) || '73.4000'}
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">DEPARTURE & TRANSIT DETAILS</span>
-                <div className="font-bold text-slate-950">
-                  Left: {activeShipment.dispatch_date 
-                    ? new Date(activeShipment.dispatch_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
-                    : '09:30 AM'}
-                </div>
-                <div className="text-slate-500 text-[11px]">
-                  Est. Remaining: {activeShipment.ai_eta_hours || 4.2} hours
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">ASSIGNED DOCK / PARKING</span>
-                <div className="font-bold text-slate-900">
-                  {yardEntryStatus === 'AT_DOCK'
-                    ? `Dock Bay: ${assignedDockNumber || 'Bay #04'}`
-                    : activeShipment.parking_slot
-                    ? `Parking Slot: ${activeShipment.parking_slot}`
-                    : 'Awaiting Gate Post'}
-                </div>
-                <div className="text-slate-500 text-[11px]">
-                  Payload: {activeShipment.total_quantity || 300} Units
-                </div>
-              </div>
-            </div>
-
-            {/* Embedded Live Route Map */}
-            <div className="pt-2">
-              <div className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-blue-600" />
-                <span>Live GPS Highway Route Map & Telematics Waypoints (Linked to PO #{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'})</span>
-              </div>
-              <div className="rounded-xl overflow-hidden border border-slate-200 shadow-inner">
-                <TruckTrackingMap shipment={activeShipment} compact={false} />
-              </div>
+            {/* Full-width map — the hero */}
+            <div className="h-[430px] w-full">
+              <TruckTrackingMap shipment={activeShipment} compact={false} />
             </div>
           </div>
 
-          {/* GPS Telematics Transmitter */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                  <Radio className="w-5 h-5 text-cyan-600 animate-pulse" />
-                  <span>Live Highway GPS Telematics Transmitter</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Transmit authenticated satellite GPS coordinates directly from your mobile device to the Supply Sync Control Center. Linked PO: <strong className="font-mono text-slate-800">#{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'PO-2026'}</strong>.
-                </p>
-              </div>
+          {/* ─── STATS DASHBOARD GRID ─── */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
 
+            {/* Current Location */}
+            <div className="col-span-2 sm:col-span-3 lg:col-span-2 p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <MapPin className="w-3.5 h-3.5 text-cyan-600" />
+                <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Current Location</span>
+              </div>
+              <div className="font-extrabold text-sm text-slate-900 leading-tight">
+                {locations[0]?.location_name || activeShipment.current_location || 'NH-48 Expressway Talegaon Toll'}
+              </div>
+              <div className="text-[11px] font-mono text-cyan-700">
+                {locations[0]?.latitude?.toFixed(5) || '18.75000'}, {locations[0]?.longitude?.toFixed(5) || '73.40000'}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Last ping: {locations[0]?.timestamp ? new Date(locations[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+              </div>
+            </div>
+
+            {/* AI ETA */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 shadow-xs">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="text-[10px] font-extrabold text-indigo-500 uppercase tracking-wider">AI ETA</span>
+              </div>
+              <div className="text-2xl font-black text-indigo-950">
+                {activeShipment.expected_arrival
+                  ? new Date(activeShipment.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : '03:40 PM'}
+              </div>
+              <div className="text-[10px] text-indigo-500 mt-0.5">Predicted arrival</div>
+            </div>
+
+            {/* Distance Travelled */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Travelled</span>
+              </div>
+              <div className="text-2xl font-black text-emerald-700">
+                {activeShipment.distance_travelled_km || 126}
+                <span className="text-sm font-bold text-emerald-600 ml-1">km</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Distance covered</div>
+            </div>
+
+            {/* Distance Remaining */}
+            <div className="p-4 rounded-2xl bg-white border border-blue-200 shadow-xs">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Navigation className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-[10px] font-extrabold text-blue-500 uppercase tracking-wider">Remaining</span>
+              </div>
+              <div className="text-2xl font-black text-blue-700">
+                {activeShipment.distance_remaining_km || 84}
+                <span className="text-sm font-bold text-blue-600 ml-1">km</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">To destination</div>
+            </div>
+
+            {/* Speed */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Radio className="w-3.5 h-3.5 text-cyan-600 animate-pulse" />
+                <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Speed</span>
+              </div>
+              <div className="text-2xl font-black text-cyan-800">
+                {locations[0]?.speed || activeShipment.speed || 60}
+                <span className="text-sm font-bold text-cyan-600 ml-1">km/h</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Live telemetry</div>
+            </div>
+          </div>
+
+          {/* ─── ROUTE + PO INFO ROW ─── */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1 text-xs">
+              <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Origin → Destination</div>
+              <div className="font-bold text-slate-900">{activeShipment.purchase_orders?.suppliers?.supplier_name || 'Supplier Facility'}</div>
+              <div className="flex items-center gap-1 text-slate-400 text-[11px]">
+                <ArrowRight className="w-3 h-3" />
+                <span className="text-slate-600 font-medium">{activeShipment.destination || 'Warehouse Hub, Pune'}</span>
+              </div>
+              <div className="text-[10px] font-mono text-blue-600 pt-1">PO: #{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'N/A'}</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1 text-xs">
+              <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Departure & Transit</div>
+              <div className="font-bold text-slate-900">
+                Left: {activeShipment.dispatch_date ? new Date(activeShipment.dispatch_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '09:30 AM'}
+              </div>
+              <div className="text-slate-500 text-[11px]">Est. Remaining: {activeShipment.ai_eta_hours || 4.2} hrs</div>
+              <div className="text-[10px] text-slate-400 pt-1">
+                Total route: {(activeShipment.distance_travelled_km || 126) + (activeShipment.distance_remaining_km || 84)} km
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1 text-xs">
+              <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Dock / Parking</div>
+              <div className="font-bold text-slate-900">
+                {yardEntryStatus === 'AT_DOCK' ? `Dock Bay: ${assignedDockNumber || 'Bay #04'}` : activeShipment.parking_slot ? `Slot: ${activeShipment.parking_slot}` : 'Awaiting Gate Post'}
+              </div>
+              <div className="text-slate-500 text-[11px]">Payload: {activeShipment.total_quantity || 300} units</div>
+              <div className="text-[10px] text-slate-400 pt-1">PO Value: ₹{Number(activeShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')}</div>
+            </div>
+          </div>
+
+          {/* ─── GPS TRANSMIT BAR ─── */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Radio className={`w-5 h-5 text-cyan-600 ${transmittingGps ? 'animate-spin' : 'animate-pulse'}`} />
+                <span className="text-xs font-extrabold text-slate-800">GPS Beacon Transmitter</span>
+                <span className="text-[10px] text-slate-400">PO: <span className="font-mono font-bold text-slate-700">#{activeShipment.purchase_orders?.po_number || activeShipment.po_id || 'N/A'}</span></span>
+              </div>
+              <input
+                type="text"
+                value={locationNameInput}
+                onChange={(e) => setLocationNameInput(e.target.value)}
+                placeholder="e.g. NH-48 Talegaon Toll, Pune"
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:border-cyan-400 text-slate-800"
+              />
               <button
                 onClick={handleTransmitGpsBeacon}
                 disabled={transmittingGps}
-                className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs transition-colors shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-extrabold text-xs transition-colors shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer flex-shrink-0"
               >
                 <Radio className={`w-4 h-4 ${transmittingGps ? 'animate-spin' : ''}`} />
-                <span>{transmittingGps ? 'Transmitting...' : 'Transmit GPS Ping'}</span>
+                {transmittingGps ? 'Transmitting...' : 'Transmit Ping'}
               </button>
             </div>
 
-            {/* Location Ping Log */}
-            <div className="overflow-hidden border border-slate-200 rounded-xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold text-[11px] uppercase">
-                    <th className="py-2.5 px-4">Timestamp</th>
-                    <th className="py-2.5 px-4">Corridor Location</th>
-                    <th className="py-2.5 px-4">GPS Coordinates</th>
-                    <th className="py-2.5 px-4">Speed</th>
-                    <th className="py-2.5 px-4">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {locations.map((loc, idx) => (
-                    <tr key={loc.location_id || idx} className="hover:bg-slate-50/60">
-                      <td className="py-2.5 px-4 text-slate-500">
-                        {new Date(loc.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </td>
-                      <td className="py-2.5 px-4 font-bold text-slate-900">{loc.location_name}</td>
-                      <td className="py-2.5 px-4 font-mono text-[11px] text-blue-600">
-                        {loc.latitude?.toFixed(4)}, {loc.longitude?.toFixed(4)}
-                      </td>
-                      <td className="py-2.5 px-4 text-emerald-600 font-bold">{loc.speed || 60} km/h</td>
-                      <td className="py-2.5 px-4">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          <span>ACTIVE BEACON</span>
-                        </span>
-                      </td>
-                    </tr>
+            {/* Recent pings — compact */}
+            {locations.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Recent Pings</div>
+                <div className="flex flex-wrap gap-2">
+                  {locations.slice(0, 4).map((loc, idx) => (
+                    <div key={loc.location_id || idx} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[10px] font-medium text-slate-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+                      <span className="font-bold text-slate-900 truncate max-w-[120px]">{loc.location_name}</span>
+                      <span className="text-slate-400">{loc.speed} km/h</span>
+                      <span className="text-slate-400">{new Date(loc.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* ── TAB 1: EMPTY STATE WHEN NO DISPATCHED TASK ── */}
       {activeTab === 'current_trip' && !activeShipment && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-6">
-          <div className="w-20 h-20 rounded-3xl bg-slate-100 border border-slate-200 mx-auto flex items-center justify-center text-slate-400">
-            <Truck className="w-10 h-10 text-slate-400" />
-          </div>
-
-          <div className="max-w-md mx-auto space-y-2">
-            <h2 className="text-xl font-extrabold text-slate-900">
-              No Active Highway Manifest Assigned
-            </h2>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Your driver operational console is currently on standby. You have not been assigned or dispatched on an active delivery route by the supplier.
-            </p>
-            <p className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-left">
-              💡 <strong>System Workflow:</strong> Once the supplier assigns you to a shipment and clicks <strong>"Dispatch"</strong>, your live GPS route map, waypoints, linked <strong>PO ID</strong>, and the <strong>"Reached at the Center"</strong> arrival button will activate here automatically.
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <button
-              onClick={() => setActiveTab('incoming_requests')}
-              className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-            >
-              <Clock className="w-4 h-4" />
-              <span>View Incoming Dispatch Requests ({driverRequests.filter((r) => r.status === 'PENDING').length})</span>
-            </button>
+        <div className="space-y-4">
+          {/* Standby Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-cyan-950 to-slate-900 rounded-2xl p-6 border border-cyan-500/20 shadow-xl text-white flex flex-col sm:flex-row items-center gap-5">
+            <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-400/20 flex items-center justify-center flex-shrink-0">
+              <Radio className="w-8 h-8 text-cyan-400 animate-pulse" />
+            </div>
+            <div className="flex-1 text-center sm:text-left">
+              <div className="flex items-center gap-2 justify-center sm:justify-start mb-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">Standby — Awaiting Supplier Dispatch</span>
+              </div>
+              <h2 className="text-lg font-extrabold text-white">No Active Highway Manifest</h2>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                You are online and ready. Once a <strong className="text-white">Supplier</strong> assigns you to a shipment and clicks <strong className="text-white">"Dispatch"</strong>, your <strong className="text-cyan-300">Live GPS Route Map</strong>, linked <strong className="text-cyan-300">PO ID</strong>, and the <strong className="text-cyan-300">"Arrived on Gate"</strong> button will activate here automatically — no refresh needed.
+              </p>
+            </div>
             <button
               onClick={fetchDriverTripData}
-              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors flex items-center gap-2 cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/30 text-cyan-200 font-bold text-xs flex items-center gap-2 transition-all"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              <span>Check for New Dispatches</span>
+              Check for Dispatch
             </button>
+          </div>
+
+          {/* Pending Requests Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-500" />
+                  Incoming Dispatch Requests
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">Supplier assignments waiting for your acceptance.</p>
+              </div>
+              {driverRequests.filter(r => r.status === 'PENDING').length > 0 && (
+                <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-extrabold text-xs border border-amber-200 animate-pulse">
+                  {driverRequests.filter(r => r.status === 'PENDING').length} Pending
+                </span>
+              )}
+            </div>
+            {driverRequests.filter(r => r.status === 'PENDING').length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-xs">
+                No pending dispatch requests. Supplier will notify you when a shipment is ready.
+              </div>
+            ) : (
+              <button
+                onClick={() => setActiveTab('incoming_requests')}
+                className="w-full px-4 py-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs transition-colors flex items-center justify-center gap-2"
+              >
+                <ArrowRight className="w-4 h-4" />
+                View {driverRequests.filter(r => r.status === 'PENDING').length} Pending Request(s) — Accept to Begin Trip
+              </button>
+            )}
           </div>
         </div>
       )}

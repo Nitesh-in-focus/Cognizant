@@ -36,6 +36,7 @@ import { routeNotification } from '../services/notifications/notificationRouter'
 import { triggerSupplierPoEmail } from '../services/emailService';
 import { PoEditHistory } from '../types/database';
 import { Filter } from 'lucide-react';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const PurchaseOrders: React.FC = () => {
   const navigate = useNavigate();
@@ -47,6 +48,13 @@ export const PurchaseOrders: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['purchase_orders', 'po_items', 'purchase_requisitions'],
+    channelName: 'po_page_realtime',
+    callback: () => fetchData(true),
+  });
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'DRAFTS' | 'SUPPLIER_SENT' | 'ACCEPTED_BY_SUPPLIER' | 'REJECTED' | 'SUPPLIER_REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('po') || searchParams.get('pr') || '');
@@ -103,9 +111,9 @@ export const PurchaseOrders: React.FC = () => {
     fetchData();
   }, [refreshKey]);
 
-  const fetchData = async () => {
+  const fetchData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [
         { data: poData },
         { data: supData },

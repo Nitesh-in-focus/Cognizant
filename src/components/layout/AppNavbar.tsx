@@ -291,6 +291,41 @@ export const AppNavbar: React.FC<AppNavbarProps> = ({
                 )}
               </div>
 
+              {/* Role Switcher for System Admin / Power User */}
+              <div className="py-2 px-3 border-b border-slate-100 bg-slate-50/70">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                  <span>Switch Role Perspective</span>
+                  <span className="text-[9px] text-purple-700 bg-purple-100 font-black px-1.5 py-0.2 rounded">SYS ADMIN</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[11px]">
+                  {[
+                    { r: 'SYSTEM_ADMIN', label: '🛡️ Sys Admin' },
+                    { r: 'PROCUREMENT_OFFICER', label: '📋 Procurement' },
+                    { r: 'SUPPLIER', label: '🏭 Supplier' },
+                    { r: 'TRUCK_DRIVER', label: '🚚 Driver' },
+                    { r: 'LOGISTICS_GATE_POST', label: '🏢 Gate Post' },
+                    { r: 'RECEIVING_QC', label: '🔍 QC Lead' },
+                    { r: 'FINANCE', label: '💳 Finance' },
+                    { r: 'WORKER', label: '👷 Worker' },
+                  ].map(({ r, label }) => (
+                    <button
+                      key={r}
+                      onClick={() => {
+                        setRole(r as UserRole);
+                        setOpenRoleMenu(false);
+                      }}
+                      className={`px-2 py-1 rounded text-left font-semibold transition-all cursor-pointer truncate ${
+                        role === r
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="pt-1.5 px-2">
                 <button
                   onClick={handleLogout}

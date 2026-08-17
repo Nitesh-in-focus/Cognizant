@@ -197,7 +197,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-3">
               Select Role Intelligence View
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
               <button
                 onClick={() => setSelectedRoleView('PROCUREMENT_OFFICER')}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
@@ -269,6 +269,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div className="text-[10px] font-bold uppercase text-slate-400">Vendor Partner</div>
                 <div className="text-xs font-black mt-0.5">Supplier Portal</div>
               </button>
+
+              <button
+                onClick={() => setSelectedRoleView('TRUCK_DRIVER')}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  selectedRoleView === 'TRUCK_DRIVER'
+                    ? 'bg-sky-50 border-sky-300 text-sky-900 shadow-xs ring-2 ring-sky-500/20'
+                    : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                }`}
+              >
+                <div className="text-[10px] font-bold uppercase text-slate-400">Carrier Transit</div>
+                <div className="text-xs font-black mt-0.5">Driver Portal</div>
+              </button>
             </div>
           </div>
 
@@ -278,6 +290,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {selectedRoleView === 'RECEIVING_QC' && <ReceivingQcIntelligenceDashboard />}
           {selectedRoleView === 'WORKER' && <WorkerIntelligenceDashboard />}
           {selectedRoleView === 'SUPPLIER' && <SupplierIntelligenceDashboard />}
+          {selectedRoleView === 'TRUCK_DRIVER' && <DriverPortal />}
           {selectedRoleView === 'PROCUREMENT_OFFICER' && <ProcurementIntelligenceDashboard />}
         </div>
       )}

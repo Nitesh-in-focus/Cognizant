@@ -19,6 +19,7 @@ import {
 import { useApp } from '../contexts/AppContext';
 import { supabase } from '../lib/supabase';
 import { EMAILJS_CONFIG, testEmailJsConnection } from '../services/emailService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Alerts: React.FC = () => {
   const navigate = useNavigate();
@@ -27,12 +28,20 @@ export const Alerts: React.FC = () => {
     markAlertAsRead,
     markAllAlertsAsRead,
     showSnackbar,
+    refreshKey,
   } = useApp();
 
   const [mainTab, setMainTab] = useState<'alerts' | 'emails'>('alerts');
   const [emailLogs, setEmailLogs] = useState<any[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [severityFilter, setSeverityFilter] = useState('ALL');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['email_notifications', 'exceptions'],
+    channelName: 'alerts_page_realtime',
+    callback: () => fetchEmailLogs(true),
+  });
 
   // EmailJS Diagnostic Tool State (Phases 1 & 19)
   const [testEmail, setTestEmail] = useState('');
@@ -44,7 +53,7 @@ export const Alerts: React.FC = () => {
     if (mainTab === 'emails') {
       fetchEmailLogs();
     }
-  }, [mainTab]);
+  }, [mainTab, refreshKey]);
 
   const handleSendTestEmail = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,9 +93,9 @@ export const Alerts: React.FC = () => {
     }
   };
 
-  const fetchEmailLogs = async () => {
+  const fetchEmailLogs = async (isBackground = false) => {
     try {
-      setLoadingEmails(true);
+      if (!isBackground) setLoadingEmails(true);
       const { data, error } = await supabase
         .from('email_notifications')
         .select('*')

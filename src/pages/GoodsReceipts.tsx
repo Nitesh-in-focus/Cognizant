@@ -19,6 +19,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { parseNlpGoodsReceipt, NlpGrnExtractedFields } from '../services/ai/grnNlpService';
 import { VoiceInputButton } from '../components/ui/VoiceInputButton';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const GoodsReceipts: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, canCreateGRN, canFinalizeQC, logAuditAction } = useApp();
@@ -28,6 +29,13 @@ export const GoodsReceipts: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['goods_receipts', 'grn_items', 'purchase_orders'],
+    channelName: 'grn_page_realtime',
+    callback: () => fetchData(true),
+  });
 
   // Create GRN Modal (NLP Assistant & Manual Form - Section 20 of updates4.md)
   const [openCreate, setOpenCreate] = useState(false);
@@ -54,9 +62,9 @@ export const GoodsReceipts: React.FC = () => {
     fetchData();
   }, [refreshKey]);
 
-  const fetchData = async () => {
+  const fetchData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [{ data: grnData }, { data: poData }, { data: prodData }] = await Promise.all([
         supabase
           .from('goods_receipts')

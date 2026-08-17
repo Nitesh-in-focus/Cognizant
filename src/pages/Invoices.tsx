@@ -32,6 +32,7 @@ import {
   executeInvoicePayout,
   ThreeWayMatchResult,
 } from '../services/matchingService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Invoices: React.FC = () => {
   const {
@@ -53,6 +54,13 @@ export const Invoices: React.FC = () => {
   const [paymentFilter, setPaymentFilter] = useState('ALL');
   const [batchMatching, setBatchMatching] = useState(false);
 
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['invoices', 'purchase_orders', 'exceptions'],
+    channelName: 'invoices_page_realtime',
+    callback: () => fetchInvoices(true),
+  });
+
   // 3-Way Match Modal state
   const [openMatchModal, setOpenMatchModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
@@ -73,9 +81,9 @@ export const Invoices: React.FC = () => {
     fetchInvoices();
   }, [refreshKey]);
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('invoices')
         .select(`

@@ -34,6 +34,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Drawer } from '../components/common/Drawer';
 import { Modal } from '../components/common/Modal';
 import { TruckTrackingMap } from '../components/maps/TruckTrackingMap';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Traceability: React.FC = () => {
   const navigate = useNavigate();
@@ -54,15 +55,23 @@ export const Traceability: React.FC = () => {
   // Google Maps popup modal for shipment
   const [trackingModalShipment, setTrackingModalShipment] = useState<any | null>(null);
 
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['purchase_requisitions', 'purchase_orders', 'shipments', 'goods_receipts', 'invoices', 'payments'],
+    channelName: 'traceability_page_realtime',
+    enabled: isAuthorized,
+    callback: () => fetchTraceabilityData(true),
+  });
+
   useEffect(() => {
     if (isAuthorized) {
       fetchTraceabilityData();
     }
   }, [refreshKey, isAuthorized]);
 
-  const fetchTraceabilityData = async () => {
+  const fetchTraceabilityData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
 
       const { data: pos, error } = await supabase
         .from('purchase_orders')

@@ -36,6 +36,9 @@ interface NavItem {
 
 interface NavGroup {
   label: string;
+  roleTag?: string;
+  roleTagColor?: string;
+  icon?: LucideIcon;
   items: NavItem[];
 }
 
@@ -49,10 +52,92 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ mobileOpen, onCloseMobil
   const navigate = useNavigate();
   const { currentUser, role, logout, unreadAlertsCount } = useApp();
 
-  const allNavGroups: NavGroup[] = role === 'SUPPLIER'
+  const isSystemAdmin = role === 'SYSTEM_ADMIN' || role === 'ADMIN';
+
+  // System Admin gets a dedicated, role-divided sidebar containing EVERYTHING
+  const systemAdminNavGroups: NavGroup[] = [
+    {
+      label: 'Executive & Core Control',
+      roleTag: 'ADMIN',
+      roleTagColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+      items: [
+        { title: 'Master Command Dashboard', path: '/', icon: LayoutDashboard },
+        { title: 'E2E Traceability Matrix', path: '/traceability', icon: GitFork, badge: 'E2E' },
+        { title: 'Procurement Intelligence', path: '/analytics', icon: BarChart3 },
+        {
+          title: 'System Realtime Alerts',
+          path: '/alerts',
+          icon: Bell,
+          badge: unreadAlertsCount > 0 ? String(unreadAlertsCount) : undefined,
+          badgeColor: 'bg-rose-500 text-white',
+        },
+      ],
+    },
+    {
+      label: 'Procurement Officer',
+      roleTag: 'PROCUREMENT',
+      roleTagColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+      items: [
+        { title: 'Purchase Requisitions', path: '/purchase-requisitions', icon: FileText },
+        { title: 'Purchase Orders', path: '/purchase-orders', icon: ShoppingCart },
+        { title: 'Suppliers Directory', path: '/suppliers', icon: Building2 },
+        { title: 'Product SKU Catalog', path: '/products', icon: Package },
+        { title: 'Warehouses & Plants', path: '/warehouses', icon: Building2 },
+      ],
+    },
+    {
+      label: 'Supplier Partner',
+      roleTag: 'SUPPLIER',
+      roleTagColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+      items: [
+        { title: 'Supplier Portal & Dispatches', path: '/supplier', icon: Building2, badge: 'PORTAL' },
+      ],
+    },
+    {
+      label: 'Carrier Fleet & Driver',
+      roleTag: 'DRIVER',
+      roleTagColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+      items: [
+        { title: 'Driver Operational Console', path: '/driver', icon: Truck, badge: 'LIVE GPS' },
+        { title: 'Live Shipments Telematics', path: '/shipments', icon: Truck, live: true },
+        { title: 'Fleet Trucks & Live Tracking', path: '/trucks', icon: Radio },
+      ],
+    },
+    {
+      label: 'Logistics & Gate Post',
+      roleTag: 'GATE POST',
+      roleTagColor: 'bg-teal-500/20 text-teal-300 border-teal-500/30',
+      items: [
+        { title: 'Gate Check-In & Yard Docks', path: '/yard', icon: Boxes },
+      ],
+    },
+    {
+      label: 'Receiving & Quality Control',
+      roleTag: 'QC',
+      roleTagColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+      items: [
+        { title: 'Receiving & GRN Intake', path: '/grn', icon: ClipboardCheck },
+        { title: 'Quality Check (8-Factor QC)', path: '/quality', icon: Shield, badge: '8-FACTOR', badgeColor: 'bg-indigo-500 text-white' },
+      ],
+    },
+    {
+      label: 'Finance & 3-Way Match',
+      roleTag: 'FINANCE',
+      roleTagColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      items: [
+        { title: 'Invoices & AI OCR', path: '/invoices', icon: Receipt },
+        { title: 'Exceptions Settlement Hub', path: '/exceptions', icon: AlertTriangle, badgeColor: 'bg-rose-500 text-white' },
+        { title: 'Payments & Payouts', path: '/payments', icon: CreditCard },
+      ],
+    },
+  ];
+
+  const standardNavGroups: NavGroup[] = role === 'SUPPLIER'
     ? [
         {
           label: 'Supplier Hub',
+          roleTag: 'SUPPLIER',
+          roleTagColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
           items: [
             { title: 'Dashboard', path: '/', icon: LayoutDashboard },
             { title: 'Supplier Portal', path: '/supplier', icon: Building2, badge: 'PORTAL' },
@@ -70,6 +155,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ mobileOpen, onCloseMobil
     ? [
         {
           label: 'Driver App Console',
+          roleTag: 'DRIVER',
+          roleTagColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
           items: [
             { title: 'Dashboard', path: '/', icon: LayoutDashboard },
             { title: 'Driver Trip Console', path: '/driver', icon: Truck, badge: 'ACTIVE' },
@@ -219,15 +306,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ mobileOpen, onCloseMobil
         },
       ];
 
-  // Filter items based on active user role
-  const filteredNavGroups = allNavGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter(
-        (item) => !item.allowedRoles || item.allowedRoles.includes(role)
-      ),
-    }))
-    .filter((group) => group.items.length > 0);
+  // System Admin gets full access with role-divided sections
+  const activeNavGroups = isSystemAdmin
+    ? systemAdminNavGroups
+    : standardNavGroups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter(
+            (item) => !item.allowedRoles || item.allowedRoles.includes(role)
+          ),
+        }))
+        .filter((group) => group.items.length > 0);
 
   const sidebarContent = (
     <aside className="w-64 shrink-0 bg-[#0F172A] text-slate-300 flex flex-col h-full min-h-screen border-r border-slate-800">
@@ -258,12 +347,39 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ mobileOpen, onCloseMobil
         )}
       </div>
 
+      {/* System Admin Mode Indicator */}
+      {isSystemAdmin && (
+        <div className="mx-3 mt-3 p-2.5 rounded-xl bg-gradient-to-r from-purple-950/80 via-slate-900 to-indigo-950/80 border border-purple-500/30 text-purple-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-extrabold text-[11px] text-purple-300">
+              <Shield className="w-3.5 h-3.5 text-purple-400" />
+              <span>SYSTEM ADMIN CONSOLE</span>
+            </div>
+            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              ALL ROLES
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">
+            Role-divided master access across all 6 departments.
+          </div>
+        </div>
+      )}
+
       {/* Navigation Groups */}
       <div className="flex-1 px-3 py-4 space-y-5 overflow-y-auto">
-        {filteredNavGroups.map((group) => (
+        {activeNavGroups.map((group) => (
           <div key={group.label}>
-            <div className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-              {group.label}
+            <div className="px-3 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+              <span className="truncate">{group.label}</span>
+              {group.roleTag && (
+                <span
+                  className={`px-1.5 py-0.2 rounded text-[8px] font-black border tracking-normal ${
+                    group.roleTagColor || 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  {group.roleTag}
+                </span>
+              )}
             </div>
             <div className="space-y-0.5">
               {group.items.map((item) => {

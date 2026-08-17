@@ -35,6 +35,7 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { TruckTrackingMap, Waypoint } from '../components/maps/TruckTrackingMap';
 import { Modal } from '../components/common/Modal';
 import { getAiEtaPrediction, EtaPredictionResult } from '../services/ai/etaPredictionService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Shipments: React.FC = () => {
   const navigate = useNavigate();
@@ -49,13 +50,20 @@ export const Shipments: React.FC = () => {
   const [aiEtaState, setAiEtaState] = useState<EtaPredictionResult | null>(null);
   const [runningAiEta, setRunningAiEta] = useState(false);
 
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['shipments', 'purchase_orders', 'trucks'],
+    channelName: 'shipments_page_realtime',
+    callback: () => fetchShipments(true),
+  });
+
   useEffect(() => {
     fetchShipments();
   }, [refreshKey]);
 
-  const fetchShipments = async () => {
+  const fetchShipments = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('shipments')
         .select(`

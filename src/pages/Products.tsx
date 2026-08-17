@@ -15,6 +15,7 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Products: React.FC = () => {
   const { role, canApprovePO, refreshKey, triggerRefresh, showSnackbar } = useApp();
@@ -29,6 +30,13 @@ export const Products: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('ALL');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['products'],
+    channelName: 'products_page_realtime',
+    callback: () => fetchProducts(true),
+  });
 
   // Helper to dynamically calculate next collision-free SKU code
   const generateUniqueProductCode = (currentList: any[]) => {
@@ -72,9 +80,9 @@ export const Products: React.FC = () => {
     fetchProducts();
   }, [refreshKey]);
 
-  const fetchProducts = async () => {
+  const fetchProducts = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase.from('products').select('*').order('product_name');
       if (error) throw error;
       setProducts(data || []);

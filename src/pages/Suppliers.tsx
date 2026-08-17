@@ -23,6 +23,7 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Suppliers: React.FC = () => {
   const { role, currentUser, logAuditAction, canApprovePO, refreshKey, triggerRefresh, showSnackbar } = useApp();
@@ -37,6 +38,13 @@ export const Suppliers: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['suppliers', 'purchase_orders'],
+    channelName: 'suppliers_page_realtime',
+    callback: () => fetchSuppliers(true),
+  });
 
   // Onboard Supplier Modal State
   const [openCreate, setOpenCreate] = useState(false);
@@ -60,9 +68,9 @@ export const Suppliers: React.FC = () => {
     fetchSuppliers();
   }, [refreshKey]);
 
-  const fetchSuppliers = async () => {
+  const fetchSuppliers = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const { data, error } = await supabase
         .from('suppliers')
         .select('*')

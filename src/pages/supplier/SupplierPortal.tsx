@@ -62,11 +62,12 @@ import {
   getStoredDriverRequests,
 } from '../../services/driverAssignmentService';
 import { LocationPickerModal } from '../../components/maps/LocationPickerModal';
+import { useRealtimeSubscription } from '../../hooks/useRealtimeSubscription';
 
 type SupplierTab = 'overview' | 'sent_pos' | 'accepted_pos' | 'shipments' | 'invoices' | 'quality' | 'locations' | 'fleet' | 'profile';
 
 export const SupplierPortal: React.FC = () => {
-  const { currentUser, role, showToast, addAlert, effectiveSupplierId, logAuditAction } = useApp();
+  const { currentUser, role, showToast, addAlert, effectiveSupplierId, logAuditAction, refreshKey } = useApp();
   const [activeTab, setActiveTab] = useState<SupplierTab>('overview');
   const [loading, setLoading] = useState(true);
 
@@ -160,13 +161,20 @@ export const SupplierPortal: React.FC = () => {
 
   const targetSupplierId = effectiveSupplierId || '00000000-0000-4000-8000-000000000003';
 
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['purchase_orders', 'po_items', 'shipments', 'invoices', 'quality_checks'],
+    channelName: 'supplier_portal_realtime',
+    callback: () => fetchSupplierData(true),
+  });
+
   useEffect(() => {
     fetchSupplierData();
-  }, [targetSupplierId]);
+  }, [targetSupplierId, refreshKey]);
 
-  const fetchSupplierData = async () => {
+  const fetchSupplierData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [
         { data: supData },
         { data: poData },

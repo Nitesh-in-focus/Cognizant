@@ -16,6 +16,7 @@ import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { executeInvoicePayout } from '../services/matchingService';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const Payments: React.FC = () => {
   const {
@@ -32,6 +33,13 @@ export const Payments: React.FC = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['payments', 'invoices'],
+    channelName: 'payments_page_realtime',
+    callback: () => fetchPaymentsData(true),
+  });
 
   // Execute Payment Modal
   const [openPayModal, setOpenPayModal] = useState(false);
@@ -60,9 +68,9 @@ export const Payments: React.FC = () => {
     }
   }, [modalSearchQuery, invoices, selectedInvoiceId]);
 
-  const fetchPaymentsData = async () => {
+  const fetchPaymentsData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [{ data: payData }, { data: invData }] = await Promise.all([
         supabase
           .from('payments')

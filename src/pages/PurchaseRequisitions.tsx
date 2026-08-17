@@ -34,6 +34,7 @@ import { parseNlpPurchaseRequisition, NlpPrExtractedFields } from '../services/a
 import { getAiSupplierRecommendation } from '../services/ai/supplierRecommendationService';
 import { sendPrRequestedNotification } from '../services/emailService';
 import { VoiceInputButton } from '../components/ui/VoiceInputButton';
+import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 
 export const PurchaseRequisitions: React.FC = () => {
   const navigate = useNavigate();
@@ -44,6 +45,13 @@ export const PurchaseRequisitions: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Realtime Live Sync across devices/users
+  useRealtimeSubscription({
+    tables: ['purchase_requisitions', 'pr_items'],
+    channelName: 'pr_page_realtime',
+    callback: () => fetchData(true),
+  });
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'MY_PRS' | 'APPROVED' | 'REJECTED' | 'REMAINING'>('ALL');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('pr') || '');
@@ -91,9 +99,9 @@ export const PurchaseRequisitions: React.FC = () => {
     fetchData();
   }, [refreshKey]);
 
-  const fetchData = async () => {
+  const fetchData = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const [
         { data: prData },
         { data: prodData },

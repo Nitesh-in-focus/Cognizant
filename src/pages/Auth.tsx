@@ -55,6 +55,9 @@ export const Auth: React.FC = () => {
     setErrorMessage('');
 
     switch (newRole) {
+      case 'SYSTEM_ADMIN':
+        setDepartment('Global Supply Chain Technical Administration & Operations');
+        break;
       case 'WORKER':
         setDepartment('Shop Floor & Assembly Operations');
         break;
@@ -340,6 +343,80 @@ export const Auth: React.FC = () => {
               </div>
             </div>
 
+            {/* Quick Demo Login Pills on Sign In */}
+            {!isSignUp && (
+              <div className="mb-4 p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                  <span className="flex items-center gap-1.5 text-blue-400">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Quick 1-Click Persona Auto-Fill
+                  </span>
+                  <span className="text-[10px] text-slate-500">Click to fill credentials</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('admin@supplysync.io');
+                      setPassword('admin123');
+                    }}
+                    className="p-2 rounded-lg bg-purple-950/50 hover:bg-purple-900/70 border border-purple-500/50 text-purple-200 text-[11px] font-bold flex items-center justify-between cursor-pointer transition-all text-left"
+                  >
+                    <div className="font-extrabold flex items-center gap-1.5">
+                      <span>👑</span>
+                      <span>System Admin (All Access)</span>
+                    </div>
+                    <span className="text-[9px] text-purple-300 font-mono bg-purple-900/60 px-1 py-0.5 rounded">admin123</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('priya.procurement@supplysync.io');
+                      setPassword('demo123');
+                    }}
+                    className="p-2 rounded-lg bg-blue-950/50 hover:bg-blue-900/70 border border-blue-500/50 text-blue-200 text-[11px] font-bold flex items-center justify-between cursor-pointer transition-all text-left"
+                  >
+                    <div className="font-extrabold flex items-center gap-1.5">
+                      <span>📋</span>
+                      <span>Procurement Officer</span>
+                    </div>
+                    <span className="text-[9px] text-blue-300 font-mono bg-blue-900/60 px-1 py-0.5 rounded">demo123</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('alok@gmail.com');
+                      setPassword('demo123');
+                    }}
+                    className="p-2 rounded-lg bg-amber-950/50 hover:bg-amber-900/70 border border-amber-500/50 text-amber-200 text-[11px] font-bold flex items-center justify-between cursor-pointer transition-all text-left"
+                  >
+                    <div className="font-extrabold flex items-center gap-1.5">
+                      <span>🏭</span>
+                      <span>Supplier (Alok)</span>
+                    </div>
+                    <span className="text-[9px] text-amber-300 font-mono bg-amber-900/60 px-1 py-0.5 rounded">demo123</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('ananya.paradox@gmail.com');
+                      setPassword('demo123');
+                    }}
+                    className="p-2 rounded-lg bg-cyan-950/50 hover:bg-cyan-900/70 border border-cyan-500/50 text-cyan-200 text-[11px] font-bold flex items-center justify-between cursor-pointer transition-all text-left"
+                  >
+                    <div className="font-extrabold flex items-center gap-1.5">
+                      <span>🚚</span>
+                      <span>Driver (Tikiyapara)</span>
+                    </div>
+                    <span className="text-[9px] text-cyan-300 font-mono bg-cyan-900/60 px-1 py-0.5 rounded">demo123</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Error Message Alert */}
             {errorMessage && (
               <div className="mb-3.5 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
@@ -454,6 +531,7 @@ export const Auth: React.FC = () => {
                       onChange={(e) => handleRoleChange(e.target.value as UserRole)}
                       className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700/80 rounded-lg text-white font-medium focus:outline-hidden focus:border-blue-500"
                     >
+                      <option value="SYSTEM_ADMIN">👑 System Administrator (All Access)</option>
                       <option value="WORKER">1. Worker</option>
                       <option value="PROCUREMENT_OFFICER">2. PR Officer</option>
                       <option value="SUPPLIER">3. Supplier</option>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Boxes,
   Plus,
@@ -10,6 +10,12 @@ import {
   ArrowRight,
   ShieldCheck,
   DoorOpen,
+  Navigation,
+  MapPin,
+  Zap,
+  Search,
+  Radio,
+  TrendingUp,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../contexts/AppContext';
@@ -17,6 +23,8 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { Modal } from '../components/common/Modal';
 import { Sparkles } from 'lucide-react';
 import { getAiDockRecommendation, DockRecommendationResult } from '../services/ai/dockRecommendationService';
+import { getAiEtaPrediction, EtaPredictionResult } from '../services/ai/etaPredictionService';
+import { TruckTrackingMap } from '../components/maps/TruckTrackingMap';
 
 export const YardManagement: React.FC = () => {
   const { refreshKey, triggerRefresh, showSnackbar, addAlert, canAssignDock, canUpdateUnloading, logAuditAction, role } = useApp();
@@ -29,7 +37,14 @@ export const YardManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [aiDockRec, setAiDockRec] = useState<DockRecommendationResult | null>(null);
   const [evaluatingDock, setEvaluatingDock] = useState(false);
-  const [activeYardTab, setActiveYardTab] = useState<'queue' | 'docks' | 'parking'>('queue');
+  const [activeYardTab, setActiveYardTab] = useState<'queue' | 'docks' | 'parking' | 'live_map'>('queue');
+
+  // Live tracking state
+  const [truckLocations, setTruckLocations] = useState<any[]>([]);
+  const [liveEtas, setLiveEtas] = useState<Record<string, EtaPredictionResult>>({});
+  const [loadingEtas, setLoadingEtas] = useState(false);
+  const [liveTrackingFilter, setLiveTrackingFilter] = useState('');
+  const [selectedLiveShipment, setSelectedLiveShipment] = useState<any | null>(null);
 
   // Search
   const [queueSearch, setQueueSearch] = useState('');
@@ -55,6 +70,9 @@ export const YardManagement: React.FC = () => {
     shipment_id: '',
     notes: '',
   });
+  // PO-first search for gate check-in
+  const [poSearchInput, setPoSearchInput] = useState('');
+  const [checkInPoSummary, setCheckInPoSummary] = useState<any | null>(null);
 
   // Assign Dock Modal
   const [assignDialog, setAssignDialog] = useState<{ open: boolean; entry: any | null }>({
@@ -63,14 +81,59 @@ export const YardManagement: React.FC = () => {
   });
   const [selectedDockId, setSelectedDockId] = useState('');
 
+  // Track which yard_entry IDs have already triggered a gate alert so we don't spam
+  const alertedArrivalIds = React.useRef<Set<string>>(new Set());
+
   useEffect(() => {
     fetchYardData();
 
+    const channelSuffix = Math.random().toString(36).slice(2, 7);
     const channel = supabase
-      .channel('yard_management_live_sync')
+      .channel(`yard_management_live_sync_${channelSuffix}`)
+      // Granular INSERT listener: fires alert when driver marks arrived
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'yard_entries' },
+        { event: 'INSERT', schema: 'public', table: 'yard_entries' },
+        (payload) => {
+          const entry = payload.new as any;
+          if (entry?.status === 'ARRIVED' && !alertedArrivalIds.current.has(entry.yard_entry_id)) {
+            alertedArrivalIds.current.add(entry.yard_entry_id);
+            addAlert({
+              title: '🚛 Truck Arrived at Security Gate',
+              message: `A truck has arrived and is awaiting Gate Check-In. Open Yard Queue → Yard Management to process immediately.`,
+              severity: 'warning',
+              link: '/yard',
+            });
+          }
+          fetchYardData();
+        }
+      )
+      // UPDATE listener: also fire alert if status transitions to ARRIVED via UPDATE
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'yard_entries' },
+        (payload) => {
+          const entry = payload.new as any;
+          const oldEntry = payload.old as any;
+          if (
+            entry?.status === 'ARRIVED' &&
+            oldEntry?.status !== 'ARRIVED' &&
+            !alertedArrivalIds.current.has(entry.yard_entry_id)
+          ) {
+            alertedArrivalIds.current.add(entry.yard_entry_id);
+            addAlert({
+              title: '🚛 Truck Arrived at Security Gate',
+              message: `A truck has arrived and is awaiting Gate Check-In. Open Yard Queue → Yard Management to process immediately.`,
+              severity: 'warning',
+              link: '/yard',
+            });
+          }
+          fetchYardData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'yard_entries' },
         () => fetchYardData()
       )
       .on(
@@ -101,6 +164,7 @@ export const YardManagement: React.FC = () => {
         { data: shpData },
         { data: poData },
         { data: parkingData },
+        { data: locData },
       ] = await Promise.all([
         supabase
           .from('yard_entries')
@@ -123,10 +187,25 @@ export const YardManagement: React.FC = () => {
         supabase.from('yards').select('*'),
         supabase
           .from('shipments')
-          .select('*, purchase_orders(po_number, supplier_id, suppliers(supplier_name))')
-          .in('status', ['IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING', 'DISPATCHED', 'PARTIALLY_DISPATCHED']),
+          .select(`
+            *,
+            purchase_orders(
+              po_id,
+              po_number,
+              total_amount,
+              order_date,
+              suppliers(supplier_name, city, phone)
+            ),
+            trucks(truck_id, vehicle_number, driver_name, driver_phone, capacity)
+          `)
+          .in('status', ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING', 'ARRIVED', 'AT_GATE', 'WAITING', 'PARTIALLY_DISPATCHED']),
         supabase.from('purchase_orders').select('*, suppliers(supplier_name)'),
         supabase.from('parking_slots').select('*, yards(yard_name)').order('slot_code'),
+        supabase
+          .from('truck_locations')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(300),
       ]);
 
       setEntries(entryData || []);
@@ -136,6 +215,7 @@ export const YardManagement: React.FC = () => {
       setShipments(shpData || []);
       setPurchaseOrders(poData || []);
       setParkingSlots(parkingData || []);
+      setTruckLocations(locData || []);
 
       if (truckData?.length && yardData?.length && !checkInState.truck_id) {
         setCheckInState({
@@ -149,6 +229,76 @@ export const YardManagement: React.FC = () => {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Compute AI ETA for all active IN_TRANSIT shipments using latest truck_locations
+  const fetchLiveEtas = async (activeShipments: any[], locations: any[]) => {
+    const inTransit = activeShipments.filter(s =>
+      ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING'].includes(s.status)
+    );
+    if (inTransit.length === 0) return;
+    setLoadingEtas(true);
+    const etaMap: Record<string, EtaPredictionResult> = {};
+    await Promise.allSettled(
+      inTransit.map(async (shp) => {
+        try {
+          const truckId = shp.truck_id || shp.trucks?.truck_id;
+          const latestLoc = truckId
+            ? locations.find(l => l.truck_id === truckId)
+            : null;
+          const eta = await getAiEtaPrediction({
+            shipment_id: shp.shipment_id,
+            vehicle_number: shp.trucks?.vehicle_number || shp.vehicle_number || 'TRUCK',
+            origin: shp.purchase_orders?.suppliers?.supplier_name || shp.origin || 'Supplier',
+            destination: shp.destination || 'Warehouse Hub',
+            remaining_km: shp.distance_remaining_km || 120,
+            current_speed_kmh: latestLoc?.speed || shp.speed || 55,
+            scheduled_arrival: shp.expected_arrival,
+          });
+          etaMap[shp.shipment_id] = eta;
+        } catch {/* skip on error */}
+      })
+    );
+    setLiveEtas(etaMap);
+    setLoadingEtas(false);
+  };
+
+  // PO-first gate check-in: when user types/selects a PO, auto-fill shipment + truck
+  const handlePoSearchSelect = (poNumber: string) => {
+    setPoSearchInput(poNumber);
+    if (!poNumber.trim()) {
+      setCheckInPoSummary(null);
+      return;
+    }
+    const cleanSearch = poNumber.trim().toLowerCase();
+    const matchedShipment = shipments.find(s =>
+      s.purchase_orders?.po_number?.toLowerCase() === cleanSearch ||
+      s.purchase_orders?.po_number?.toLowerCase().includes(cleanSearch) ||
+      s.shipment_number?.toLowerCase().includes(cleanSearch)
+    );
+    if (matchedShipment) {
+      setCheckInPoSummary(matchedShipment);
+      setCheckInState(prev => ({
+        ...prev,
+        shipment_id: matchedShipment.shipment_id,
+        truck_id: matchedShipment.trucks?.truck_id || matchedShipment.truck_id || prev.truck_id,
+      }));
+    } else {
+      // Check in purchaseOrders directly
+      const matchedPo = purchaseOrders.find(p =>
+        p.po_number?.toLowerCase() === cleanSearch ||
+        p.po_number?.toLowerCase().includes(cleanSearch)
+      );
+      if (matchedPo) {
+        setCheckInPoSummary({
+          purchase_orders: matchedPo,
+          status: matchedPo.status || 'DISPATCHED',
+          total_quantity: matchedPo.total_quantity || 0,
+        });
+      } else {
+        setCheckInPoSummary(null);
+      }
     }
   };
 
@@ -597,16 +747,34 @@ export const YardManagement: React.FC = () => {
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-        {(['queue', 'docks', 'parking'] as const).map((t) => (
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit overflow-x-auto">
+        {(['queue', 'docks', 'parking', 'live_map'] as const).map((t) => (
           <button
             key={t}
-            onClick={() => setActiveYardTab(t)}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold capitalize transition-colors ${
+            onClick={() => {
+              setActiveYardTab(t);
+              if (t === 'live_map') {
+                fetchLiveEtas(shipments, truckLocations);
+              }
+            }}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-bold whitespace-nowrap transition-colors ${
               activeYardTab === t ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            {t === 'queue' ? 'Yard Queue' : t === 'docks' ? 'Dock Bays' : 'Parking Slots'}
+            {t === 'queue' && <><Boxes className="w-3.5 h-3.5" /><span>Yard Queue</span></>}
+            {t === 'docks' && <><DoorOpen className="w-3.5 h-3.5" /><span>Dock Bays</span></>}
+            {t === 'parking' && <><Truck className="w-3.5 h-3.5" /><span>Parking Slots</span></>}
+            {t === 'live_map' && (
+              <>
+                <Navigation className="w-3.5 h-3.5 text-cyan-600" />
+                <span className="text-cyan-700">Live Tracking</span>
+                {shipments.filter(s => ['DISPATCHED','IN_TRANSIT','ARRIVING'].includes(s.status)).length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full bg-cyan-600 text-white text-[9px] font-extrabold">
+                    {shipments.filter(s => ['DISPATCHED','IN_TRANSIT','ARRIVING'].includes(s.status)).length}
+                  </span>
+                )}
+              </>
+            )}
           </button>
         ))}
       </div>
@@ -773,6 +941,33 @@ export const YardManagement: React.FC = () => {
 
       {/* ─── YARD QUEUE TAB ─── */}
       {activeYardTab === 'queue' && (
+      <div className="space-y-4">
+      {/* Arriving Trucks Alert Banner */}
+      {(() => {
+        const arrivingCount = entries.filter(e => e.status === 'ARRIVED' && !e.gate_verified).length;
+        return arrivingCount > 0 ? (
+          <div className="flex items-center gap-4 p-4 rounded-xl border-2 border-amber-400 bg-amber-50 shadow-md animate-pulse">
+            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-600 flex-shrink-0">
+              <Truck className="w-6 h-6" />
+            </div>
+            <div className="flex-1">
+              <div className="font-extrabold text-amber-900 text-sm flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                {arrivingCount} Truck{arrivingCount > 1 ? 's' : ''} Awaiting Gate Check-In
+              </div>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Driver{arrivingCount > 1 ? 's have' : ' has'} marked arrival. Process Gate Check-In immediately to assign dock.
+              </p>
+            </div>
+            <button
+              onClick={() => setQueueStatusFilter('ARRIVED')}
+              className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs transition-colors shadow-xs flex-shrink-0"
+            >
+              Show Arrivals
+            </button>
+          </div>
+        ) : null;
+      })()}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -798,7 +993,7 @@ export const YardManagement: React.FC = () => {
                 className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50"
               >
                 <option value="">All Status</option>
-                {['WAITING','AT_DOCK','DEPARTED','PARKED'].map(s => (
+                {['ARRIVED','WAITING','AT_DOCK','PARKED','DEPARTED'].map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
@@ -853,7 +1048,14 @@ export const YardManagement: React.FC = () => {
                   .map((entry) => {
                   const assignment = entry.dock_assignments?.[0];
                   return (
-                    <tr key={entry.yard_entry_id} className="hover:bg-slate-50/75 transition-colors">
+                    <tr
+                      key={entry.yard_entry_id}
+                      className={`hover:bg-slate-50/75 transition-colors ${
+                        entry.status === 'ARRIVED'
+                          ? 'bg-amber-50/70 border-l-4 border-amber-400'
+                          : ''
+                      }`}
+                    >
                       <td className="py-3.5 px-4 font-bold text-blue-600">
                         {entry.trucks?.vehicle_number || '—'}
                         <div className="text-[11px] font-normal text-slate-400">{entry.trucks?.driver_name || '—'}</div>
@@ -929,6 +1131,216 @@ export const YardManagement: React.FC = () => {
           </table>
         </div>
       </div>
+      </div>
+      )}
+
+      {/* ─── LIVE TRACKING TAB ─── */}
+      {activeYardTab === 'live_map' && (
+        <div className="space-y-5">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <Navigation className="w-4 h-4 text-cyan-600" />
+                Live Inbound Truck Tracking
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Real-time truck locations from GPS telemetry, linked by PO number. AI ETA computed per shipment.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter by PO, truck, shipment..."
+                  value={liveTrackingFilter}
+                  onChange={e => setLiveTrackingFilter(e.target.value)}
+                  className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white w-52 focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <button
+                onClick={() => fetchLiveEtas(shipments, truckLocations)}
+                disabled={loadingEtas}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold transition-colors disabled:opacity-60"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${loadingEtas ? 'animate-spin' : ''}`} />
+                {loadingEtas ? 'Computing ETA...' : 'Refresh AI ETAs'}
+              </button>
+            </div>
+          </div>
+
+          {/* Active shipments — no trucks in transit */}
+          {shipments.filter(s => ['DISPATCHED','IN_TRANSIT','ARRIVING','ARRIVED'].includes(s.status)).length === 0 ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-xs">
+              <Navigation className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-bold text-slate-600">No Active Inbound Trucks</p>
+              <p className="text-xs text-slate-400 mt-1">Trucks will appear here once suppliers dispatch shipments.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+              {/* Left: Truck Cards with ETA */}
+              <div className="xl:col-span-1 space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                {shipments
+                  .filter(s => ['DISPATCHED','IN_TRANSIT','ARRIVING','ARRIVED'].includes(s.status))
+                  .filter(s => !liveTrackingFilter ||
+                    s.shipment_number?.toLowerCase().includes(liveTrackingFilter.toLowerCase()) ||
+                    s.purchase_orders?.po_number?.toLowerCase().includes(liveTrackingFilter.toLowerCase()) ||
+                    s.trucks?.vehicle_number?.toLowerCase().includes(liveTrackingFilter.toLowerCase()) ||
+                    s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(liveTrackingFilter.toLowerCase())
+                  )
+                  .map((shp) => {
+                    const truckId = shp.truck_id || shp.trucks?.truck_id;
+                    const latestLoc = truckId ? truckLocations.find(l => l.truck_id === truckId) : null;
+                    const eta = liveEtas[shp.shipment_id];
+                    const isSelected = selectedLiveShipment?.shipment_id === shp.shipment_id;
+                    const statusColor = shp.status === 'ARRIVED' ? 'border-emerald-400 bg-emerald-50/60'
+                      : shp.status === 'ARRIVING' ? 'border-amber-400 bg-amber-50/60'
+                      : 'border-cyan-300 bg-cyan-50/40';
+
+                    return (
+                      <div
+                        key={shp.shipment_id}
+                        onClick={() => setSelectedLiveShipment(shp)}
+                        className={`p-4 rounded-xl border-2 cursor-pointer transition-all hover:shadow-md ${
+                          isSelected ? 'ring-2 ring-cyan-500 ' + statusColor : 'border-slate-200 bg-white hover:border-cyan-300'
+                        }`}
+                      >
+                        {/* PO + Shipment Header */}
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Linked PO</div>
+                            <div className="font-extrabold text-sm text-blue-700 font-mono">
+                              {shp.purchase_orders?.po_number || shp.po_id || '—'}
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${
+                            shp.status === 'ARRIVED' ? 'bg-emerald-600 text-white'
+                            : shp.status === 'ARRIVING' ? 'bg-amber-500 text-white animate-pulse'
+                            : 'bg-cyan-600 text-white'
+                          }`}>
+                            {shp.status}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-slate-600 space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <Truck className="w-3 h-3 text-slate-400" />
+                            <span className="font-bold text-slate-800">{shp.trucks?.vehicle_number || shp.vehicle_number || '—'}</span>
+                            <span className="text-slate-400">— {shp.trucks?.driver_name || shp.driver_name || 'Driver'}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            <span className="truncate">{latestLoc?.location_name || shp.current_location || 'Location updating...'}</span>
+                          </div>
+                          {latestLoc?.speed && (
+                            <div className="flex items-center gap-1.5">
+                              <Radio className="w-3 h-3 text-cyan-500" />
+                              <span className="text-cyan-700 font-semibold">{latestLoc.speed} km/h</span>
+                              <span className="text-slate-400 text-[10px]">
+                                {latestLoc?.timestamp ? new Date(latestLoc.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Supplier row */}
+                        <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-500 flex items-center justify-between">
+                          <span>Supplier: <strong className="text-slate-700">{shp.purchase_orders?.suppliers?.supplier_name || '—'}</strong></span>
+                          <span>Qty: <strong className="text-slate-700">{shp.total_quantity || '—'}</strong></span>
+                        </div>
+
+                        {/* AI ETA Block */}
+                        {eta ? (
+                          <div className="mt-2.5 p-2.5 rounded-lg bg-indigo-50 border border-indigo-200">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <Sparkles className="w-3 h-3 text-indigo-600" />
+                              <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wide">AI ETA (Gemini)</span>
+                              <span className="ml-auto text-[10px] font-bold text-indigo-600">{eta.confidence}% conf</span>
+                            </div>
+                            <div className="text-base font-extrabold text-indigo-950">
+                              {eta.predicted_eta_formatted || new Date(eta.predicted_eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            {eta.delay_minutes > 0 && (
+                              <div className="text-[10px] text-amber-700 font-semibold mt-0.5 flex items-center gap-1">
+                                <TrendingUp className="w-3 h-3" />
+                                {eta.delay_minutes}m delay risk ({eta.delay_probability}% probability)
+                              </div>
+                            )}
+                            <div className="text-[10px] text-indigo-600 mt-1 leading-relaxed">{eta.recommended_action}</div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); fetchLiveEtas([shp], truckLocations); }}
+                            className="mt-2.5 w-full py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px] font-bold hover:bg-indigo-100 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <Zap className="w-3 h-3" />
+                            Compute AI ETA
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Right: Live Map for selected shipment */}
+              <div className="xl:col-span-2">
+                {selectedLiveShipment ? (
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-extrabold text-slate-900 flex items-center gap-2">
+                          <Navigation className="w-3.5 h-3.5 text-cyan-600" />
+                          Live Route — {selectedLiveShipment.trucks?.vehicle_number || 'Truck'}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                          PO: <strong className="text-blue-700">{selectedLiveShipment.purchase_orders?.po_number || '—'}</strong>
+                          {' · '}
+                          Shipment: <strong>{selectedLiveShipment.shipment_number}</strong>
+                          {' · '}
+                          Supplier: <strong>{selectedLiveShipment.purchase_orders?.suppliers?.supplier_name || '—'}</strong>
+                        </div>
+                      </div>
+                      <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${
+                        selectedLiveShipment.status === 'ARRIVED' ? 'bg-emerald-600 text-white'
+                        : selectedLiveShipment.status === 'ARRIVING' ? 'bg-amber-500 text-white animate-pulse'
+                        : 'bg-cyan-600 text-white'
+                      }`}>{selectedLiveShipment.status}</span>
+                    </div>
+                    <div className="h-96">
+                      <TruckTrackingMap shipment={selectedLiveShipment} compact={false} />
+                    </div>
+                    {/* PO Details Grid */}
+                    <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-t border-slate-100 text-xs">
+                      <div className="p-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
+                        <div className="text-[10px] font-bold text-indigo-500 uppercase mb-0.5">PO Number</div>
+                        <div className="font-extrabold text-indigo-900 font-mono">{selectedLiveShipment.purchase_orders?.po_number || '—'}</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase mb-0.5">PO Value</div>
+                        <div className="font-extrabold text-slate-900">₹{Number(selectedLiveShipment.purchase_orders?.total_amount || 0).toLocaleString('en-IN')}</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase mb-0.5">Supplier City</div>
+                        <div className="font-extrabold text-slate-900">{selectedLiveShipment.purchase_orders?.suppliers?.city || '—'}</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase mb-0.5">Cargo Qty</div>
+                        <div className="font-extrabold text-slate-900">{selectedLiveShipment.total_quantity || '—'} units</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200 h-96 flex flex-col items-center justify-center text-slate-400 shadow-xs">
+                    <Navigation className="w-10 h-10 mb-3 text-slate-300" />
+                    <p className="text-sm font-bold">Select a truck to view live route</p>
+                    <p className="text-xs mt-1">Click any truck card on the left to see its GPS map</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Gate Check-in Modal */}
@@ -950,18 +1362,109 @@ export const YardManagement: React.FC = () => {
               onClick={handleGateCheckIn}
               className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
             >
-              Verify & Gate In
+              Verify &amp; Gate In
             </button>
           </>
         }
       >
         <div className="space-y-4 text-xs">
-          {/* Shipment Search */}
+          {/* 1. PO-FIRST SEARCH — Primary way to link a truck to a PO */}
+          <div className="p-3 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200">
+            <label className="font-extrabold text-blue-800 block mb-2 flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" />
+              Search by PO Number (Quick Auto-Fill)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Type PO number e.g. PO-2026-001"
+                value={poSearchInput}
+                onChange={e => handlePoSearchSelect(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-blue-500 text-xs"
+              />
+            </div>
+
+            {/* Quick Pick Dispatched POs */}
+            {shipments.filter(s => ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING', 'ARRIVED'].includes(s.status)).length > 0 && (
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-bold text-slate-500">Dispatched POs:</span>
+                {shipments
+                  .filter(s => ['DISPATCHED', 'IN_TRANSIT', 'ARRIVING', 'ARRIVED'].includes(s.status))
+                  .slice(0, 6)
+                  .map((s) => {
+                    const poNum = s.purchase_orders?.po_number || s.po_id;
+                    if (!poNum) return null;
+                    return (
+                      <button
+                        key={s.shipment_id}
+                        type="button"
+                        onClick={() => handlePoSearchSelect(poNum)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-extrabold border transition-all cursor-pointer ${
+                          poSearchInput === poNum
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'
+                        }`}
+                      >
+                        {poNum} {s.status === 'ARRIVED' ? '🟢' : '🚚'}
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+            {/* PO Summary Card — auto-populated */}
+            {checkInPoSummary && (
+              <div className="mt-2.5 p-3 rounded-lg bg-white border border-blue-300 space-y-2">
+                <div className="font-extrabold text-blue-900 text-[11px] uppercase tracking-wide flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  PO Found — All fields auto-filled
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">PO Number</span>
+                    <span className="font-extrabold text-blue-700 font-mono">{checkInPoSummary.purchase_orders?.po_number || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">Supplier</span>
+                    <span className="font-bold text-slate-800">{checkInPoSummary.purchase_orders?.suppliers?.supplier_name || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">Truck</span>
+                    <span className="font-bold text-slate-800">{checkInPoSummary.trucks?.vehicle_number || trucks.find(t => t.truck_id === checkInState.truck_id)?.vehicle_number || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">Driver</span>
+                    <span className="font-bold text-slate-800">{checkInPoSummary.trucks?.driver_name || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">Shipment</span>
+                    <span className="font-mono font-bold text-slate-800">{checkInPoSummary.shipment_number || checkInPoSummary.shipment_id?.slice(0, 12) || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-semibold block">Status</span>
+                    <span className={`font-extrabold ${
+                      checkInPoSummary.status === 'ARRIVED' ? 'text-emerald-700' : 'text-amber-700'
+                    }`}>{checkInPoSummary.status}</span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-1">PO Value: <strong className="text-slate-700">₹{Number(checkInPoSummary.purchase_orders?.total_amount || 0).toLocaleString('en-IN')}</strong></div>
+              </div>
+            )}
+            {poSearchInput && !checkInPoSummary && (
+              <div className="mt-2 text-[11px] text-amber-700 font-semibold flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                No matching PO found. Try selecting shipment manually below.
+              </div>
+            )}
+          </div>
+
+          <div className="text-[10px] text-center text-slate-400 font-semibold">── OR select manually below ──</div>
+
+          {/* Shipment / general search */}
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">Search Shipment / Truck / PO / Supplier</label>
+            <label className="font-semibold text-slate-700 block mb-1.5">Search Shipment / Truck / Supplier</label>
             <input
               type="text"
-              placeholder="Type shipment number, truck, PO, driver or supplier..."
+              placeholder="Type shipment number, truck, driver or supplier..."
               value={shipmentSearch}
               onChange={e => setShipmentSearch(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-none focus:border-blue-400"
@@ -993,31 +1496,34 @@ export const YardManagement: React.FC = () => {
 
           {/* Linked Shipment */}
           <div>
-            <label className="font-semibold text-slate-700 block mb-1.5">Linked Inbound Shipment & PO ID</label>
+            <label className="font-semibold text-slate-700 block mb-1.5">Linked Inbound Shipment &amp; PO</label>
             <select
               value={checkInState.shipment_id}
               onChange={(e) => {
                 const selectedShp = shipments.find((s) => s.shipment_id === e.target.value);
+                setCheckInPoSummary(selectedShp || null);
+                setPoSearchInput(selectedShp?.purchase_orders?.po_number || '');
                 setCheckInState({
                   ...checkInState,
                   shipment_id: e.target.value,
-                  truck_id: selectedShp?.truck_id || checkInState.truck_id,
+                  truck_id: selectedShp?.trucks?.truck_id || selectedShp?.truck_id || checkInState.truck_id,
                 });
               }}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-800"
             >
               <option value="">— Direct Gate Verification (No Shipment) —</option>
               {shipments
-                .filter(s => 
-                  s.status !== 'UNLOADED' && 
-                  s.status !== 'COMPLETED' && 
-                  s.status !== 'DEPARTED' && 
+                .filter(s =>
+                  s.status !== 'UNLOADED' &&
+                  s.status !== 'COMPLETED' &&
+                  s.status !== 'DEPARTED' &&
                   s.status !== 'CANCELLED'
                 )
                 .filter(s => !shipmentSearch ||
                   s.shipment_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
                   s.purchase_orders?.po_number?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
-                  s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(shipmentSearch.toLowerCase())
+                  s.purchase_orders?.suppliers?.supplier_name?.toLowerCase().includes(shipmentSearch.toLowerCase()) ||
+                  s.trucks?.vehicle_number?.toLowerCase().includes(shipmentSearch.toLowerCase())
                 )
                 .map((s) => (
                   <option key={s.shipment_id} value={s.shipment_id}>
@@ -1025,20 +1531,6 @@ export const YardManagement: React.FC = () => {
                   </option>
               ))}
             </select>
-            {/* Auto-derived PO/Supplier Info */}
-            {checkInState.shipment_id && (() => {
-              const shp = shipments.find(s => s.shipment_id === checkInState.shipment_id);
-              if (!shp) return null;
-              return (
-                <div className="mt-2 p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-[11px] space-y-0.5">
-                  <div className="flex gap-4">
-                    <span><span className="text-slate-500 font-semibold">PO:</span> <span className="font-bold text-blue-700">{shp.purchase_orders?.po_number || '—'}</span></span>
-                    <span><span className="text-slate-500 font-semibold">Supplier:</span> <span className="font-bold text-blue-700">{shp.purchase_orders?.suppliers?.supplier_name || '—'}</span></span>
-                  </div>
-                  <div className="text-slate-500">PO and Supplier will be auto-linked from this shipment. No manual entry needed.</div>
-                </div>
-              );
-            })()}
           </div>
 
           {/* Yard */}
